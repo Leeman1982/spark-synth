@@ -146,7 +146,7 @@ private:
     MenuItem  _menuSel    = MenuItem::SEQ_STEP_EDIT;
 
     // Synth mode selection
-    SynthMode _modeTmp    = SynthMode::ANALOG;
+    SynthMode _modeTmp    = SynthMode::DUAL_OSC;
 
     // MIDI settings
     uint8_t   _midiChTmp  = 1;

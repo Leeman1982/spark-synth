@@ -419,7 +419,7 @@ bool UI::isSynthParamVisible(SynthParamID id) {
     if (id >= SynthParamID::REVERB_AMT   && id <= SynthParamID::DELAY_FEEDBACK) return true;
     // Mode-specific
     switch(m) {
-        case SynthMode::ANALOG:
+        case SynthMode::DUAL_OSC:
             return (id >= SynthParamID::OSC1_WAVE && id <= SynthParamID::PULSE_WIDTH) ||
                    (id >= SynthParamID::FENV_ATK  && id <= SynthParamID::LFO_PWM_DEPTH) ||
                    id == SynthParamID::PORTA_TIME;

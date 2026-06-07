@@ -183,7 +183,7 @@ float SynthEngine::oscillator(float& phase, float inc, WaveType type, float pw, 
             pw = constrain(pw, 0.02f, 0.98f);
             out = (phase < pw) ? 1.0f : -1.0f;
             break;
-        case WaveType::NOISE:
+        case WaveType::WAVE_NOISE:
             out = noise(seed);
             break;
         default: break;
@@ -269,7 +269,6 @@ float SynthEngine::sampleVoice(Voice& v) {
         v.currentFreq = v.freq;
     }
 
-    float invSr  = 1.0f / _sr;
     float freq   = v.currentFreq;
     float inc1   = freq / _sr;
     float inc2   = midiToFreq(v.note + (int)_p.osc2Coarse) * powf(2.0f, _p.osc2Detune/12.0f) / _sr;
@@ -294,7 +293,7 @@ float SynthEngine::sampleVoice(Voice& v) {
     pw = constrain(pw, 0.02f, 0.98f);
 
     switch(_p.mode) {
-        case SynthMode::ANALOG: {
+        case SynthMode::DUAL_OSC: {
             float s1 = oscillator(v.phase1, inc1, _p.osc1Wave, pw, v.noiseSeed) * _p.osc1Level;
             float s2 = oscillator(v.phase2, inc2, _p.osc2Wave, pw, v.noiseSeed) * _p.osc2Level;
             float ns = noise(v.noiseSeed) * _p.noiseLevel;

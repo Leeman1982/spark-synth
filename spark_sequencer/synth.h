@@ -5,23 +5,25 @@
 #include "scales.h"
 
 // ─── Enumerations ─────────────────────────────────────────────────────────────
+// NOTE: ANALOG is #defined 0xC0 by esp32-hal-gpio.h — use DUAL_OSC instead.
+// NOTE: ADSR conflicts with audio_tools::ADSR — our envelope is SynthEnv.
 
 enum class SynthMode : uint8_t {
-    ANALOG = 0,  // Dual oscillator analog (InstrumentAnalog inspired)
-    JUNO,        // DCO+PWM+Sub+noise subtractive (InstrumentJuno inspired)
-    FM,          // 4-operator FM synthesis (InstrumentDX7 inspired)
-    BASS,        // Acid bass (TB-303 style — accent + slide)
-    PAD,         // Supersaw pads
-    KEYS,        // Karplus-Strong plucked string
+    DUAL_OSC = 0, // Dual oscillator analog (InstrumentAnalog inspired)
+    JUNO,         // DCO+PWM+Sub+noise subtractive (InstrumentJuno inspired)
+    FM,           // 4-operator FM synthesis (InstrumentDX7 inspired)
+    BASS,         // Acid bass (TB-303 style — accent + slide)
+    PAD,          // Supersaw pads
+    KEYS,         // Karplus-Strong plucked string
     NUM_MODES
 };
 
 enum class WaveType : uint8_t {
-    SINE = 0, TRIANGLE, SAW, SQUARE, PULSE, NOISE, NUM_WAVES
+    SINE = 0, TRIANGLE, SAW, SQUARE, PULSE, WAVE_NOISE, NUM_WAVES
 };
 
 enum class LFODest : uint8_t {
-    NONE = 0, FILTER, PITCH, AMP, PWM, NUM_DESTS
+    DEST_NONE = 0, FILTER, PITCH, AMP, PWM, NUM_DESTS
 };
 
 enum class FilterMode : uint8_t {
@@ -134,7 +136,7 @@ static const JunoPatch JUNO_PATCHES[JUNO_PATCHES_COUNT] = {
 // ─── Synth Parameters (one patch, saved per pattern) ─────────────────────────
 
 struct SynthParams {
-    SynthMode mode        = SynthMode::ANALOG;
+    SynthMode mode        = SynthMode::DUAL_OSC;
 
     // ── Oscillator 1 ─────────────────────────────────────────────────────────
     WaveType  osc1Wave    = WaveType::SAW;
@@ -176,7 +178,7 @@ struct SynthParams {
     WaveType  lfoWave   = WaveType::SINE;
     float     lfoRate   = 2.0f;
     float     lfoDepth  = 0.0f;
-    LFODest   lfoDest   = LFODest::FILTER;
+    LFODest   lfoDest   = LFODest::DEST_NONE;
     float     lfoPwmDepth= 0.0f;
 
     // ── Portamento ────────────────────────────────────────────────────────────
@@ -209,9 +211,9 @@ struct SynthParams {
     uint8_t   fmPatch    = 0;
 };
 
-// ─── ADSR Envelope ───────────────────────────────────────────────────────────
+// ─── Envelope (renamed SynthEnv — 'ADSR' conflicts with audio_tools::ADSR) ───
 
-struct ADSR {
+struct SynthEnv {
     enum class State : uint8_t { IDLE, ATTACK, DECAY, SUSTAIN, RELEASE } state = State::IDLE;
     float level = 0;
     float attackCoef, decayCoef, sustainLevel, releaseCoef;
@@ -300,17 +302,16 @@ struct Voice {
 
     // Oscillator phases
     float   phase1 = 0, phase2 = 0, phaseSub = 0;
-    float   phaseInc1, phaseInc2, phaseIncSub;
 
     // FM operators
     float   opPhase[NUM_FM_OPS]   = {};
     float   opOut[NUM_FM_OPS]     = {};
     float   opEnvLevel[NUM_FM_OPS]= {};
-    ADSR    opEnv[NUM_FM_OPS];
+    SynthEnv opEnv[NUM_FM_OPS];
 
     // Envelopes
-    ADSR    ampEnv;
-    ADSR    filterEnv;
+    SynthEnv ampEnv;
+    SynthEnv filterEnv;
 
     // Filters
     SVF     lpf;
