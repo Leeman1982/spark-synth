@@ -1,4 +1,5 @@
 #include "synth.h"
+#include <string.h>   // memset, memcpy
 
 static const float INV_SR_DEFAULT = 1.0f / SAMPLE_RATE;
 // TWO_PI is provided by Arduino.h — do not redefine

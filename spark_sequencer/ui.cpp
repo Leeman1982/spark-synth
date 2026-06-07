@@ -2,6 +2,7 @@
 #include "storage.h"
 #include "scales.h"
 #include <math.h>
+#include <string.h>   // strcpy, snprintf
 
 extern Storage storage;
 

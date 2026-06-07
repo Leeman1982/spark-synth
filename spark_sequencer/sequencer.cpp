@@ -1,5 +1,6 @@
 #include "sequencer.h"
 #include "midi_out.h"
+#include <string.h>   // memcpy, strcpy
 
 extern MidiOut midiOut;  // defined in main sketch
 

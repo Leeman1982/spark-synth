@@ -48,10 +48,11 @@ private:
     bool          _activeLow;
     bool          _state = false;
     bool          _lastState = false;
-    bool          _pressedFlag = false;
+    bool          _pressedFlag  = false;
     bool          _releasedFlag = false;
-    bool          _longFired = false;
-    unsigned long _pressTime = 0;
+    bool          _longFired    = false;
+    bool          _lpReported   = false;   // guards wasLongPress() one-shot
+    unsigned long _pressTime    = 0;
     unsigned long _lastDebounce = 0;
     uint8_t       _rawLast = HIGH;
 };

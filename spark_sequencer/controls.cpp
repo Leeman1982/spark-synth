@@ -110,6 +110,7 @@ void Button::update() {
             _pressedFlag = true;
             _pressTime   = now;
             _longFired   = false;
+            _lpReported  = false;
         } else if (!active && _state) {
             // Falling edge
             _state          = false;
@@ -137,15 +138,11 @@ bool Button::wasReleased() {
 bool Button::isHeld() { return _state; }
 
 bool Button::wasLongPress() {
-    // Returns true once on long-press threshold
-    // Caller checks this each loop; we report it via update()
-    // Use the flag pattern: clear after reading
-    static bool _lpFlag = false;
-    if (_state && _longFired && !_lpFlag) {
-        _lpFlag = true;
+    if (_longFired && !_lpReported) {
+        _lpReported = true;
         return true;
     }
-    if (!_state) _lpFlag = false;
+    if (!_state) _lpReported = false;  // reset when released
     return false;
 }
 

@@ -35,7 +35,12 @@
  *   └─────────────────────────────────────┘
  */
 
-#include "AudioTools.h"  // pschatzmann/arduino-audio-tools
+// ─── Library includes — must come before local headers ────────────────────────
+// AudioTools by Phil Schatzmann  (Library Manager: "arduino-audio-tools")
+#include "AudioTools.h"
+// U8g2 display driver — included via ui.h
+// LittleFS flash FS — included via storage.h
+// Wire (I2C) — included via ui.h
 
 #include "config.h"
 #include "synth.h"
@@ -114,16 +119,17 @@ void setup() {
     synthEngine.setParams(sequencer.getCurrentPattern().synth);
 
     // ── I2S / PCM5102 ──────────────────────────────────────────────────────
-    auto cfg          = i2sOut.defaultConfig(TX_MODE);
-    cfg.pin_bck       = PIN_I2S_BCK;
-    cfg.pin_ws        = PIN_I2S_WS;
-    cfg.pin_data      = PIN_I2S_DATA;
-    cfg.sample_rate   = SAMPLE_RATE;
-    cfg.channels      = AUDIO_CHANNELS;
+    // AudioTools I2SConfig field names: dma_buf_count / dma_buf_len (frames).
+    // i2s_format and buffer_size are NOT part of the public API — omit them.
+    auto cfg            = i2sOut.defaultConfig(TX_MODE);
+    cfg.pin_bck         = PIN_I2S_BCK;
+    cfg.pin_ws          = PIN_I2S_WS;
+    cfg.pin_data        = PIN_I2S_DATA;
+    cfg.sample_rate     = SAMPLE_RATE;
+    cfg.channels        = AUDIO_CHANNELS;
     cfg.bits_per_sample = BITS_PER_SAMPLE;
-    cfg.buffer_size   = AUDIO_BUFFER_SZ * AUDIO_CHANNELS * (BITS_PER_SAMPLE / 8);
-    cfg.buffer_count  = DMA_BUF_COUNT;
-    cfg.i2s_format    = I2S_STD_FORMAT;
+    cfg.dma_buf_len     = AUDIO_BUFFER_SZ;   // frames per DMA buffer
+    cfg.dma_buf_count   = DMA_BUF_COUNT;     // number of DMA buffers
 
     if (!i2sOut.begin(cfg)) {
         Serial.println("[ERR] I2S init failed!");
@@ -137,7 +143,7 @@ void setup() {
     xTaskCreatePinnedToCore(
         audioTask,
         "audio",
-        4096,               // stack (synthesis is mostly register-based)
+        8192,               // stack — sinf/powf + voice processing needs headroom
         nullptr,
         configMAX_PRIORITIES - 1,  // highest priority
         &audioTaskHandle,
