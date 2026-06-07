@@ -1,7 +1,7 @@
 #include "synth.h"
 
 static const float INV_SR_DEFAULT = 1.0f / SAMPLE_RATE;
-static const float TWO_PI = 2.0f * M_PI;
+// TWO_PI is provided by Arduino.h — do not redefine
 
 // ─── Reverb comb filter lengths (prime-ish, fit inside 2000-element buffer) ───
 static const int COMB_LENGTHS[REVERB_COMBS]    = { 1117, 1187, 1061, 997, 901, 983 };
@@ -72,15 +72,10 @@ void SynthEngine::noteOn(uint8_t note, uint8_t vel, bool accent, bool slide) {
 
     float freq = midiToFreq(note);
 
-    // Portamento: if slide flag and already playing, glide from current freq
-    if (slide && v.active) {
-        v.targetFreq = freq;
-        if (_p.portaTime < 0.001f) {
-            v.currentFreq = freq;
-        }
-        // keep v.currentFreq where it is, sampleVoice() will track targetFreq
-    } else {
-        v.currentFreq = freq;
+    // Portamento: if slide and already playing, glide from current freq
+    // v.freq = target; v.currentFreq tracks toward it each sample
+    if (!(slide && v.active)) {
+        v.currentFreq = freq;   // instant jump when not sliding
     }
     v.freq    = freq;
     v.note    = note;
