@@ -6,10 +6,10 @@
  *   Audio: PCM5102 I2S DAC → 3.5 mm TRS stereo
  *   OLED : EstarDyn 1.3" SH1106 128×64 I2C + EC11 encoder + BACK/CONFIRM
  *   MIDI : 3.5 mm TRS out (UART1 31250 baud)
- *   Flash: W25Q external SPI (optional; patterns on internal LittleFS)
+ *   Flash: Internal LittleFS (patterns / settings)
  *
- * Libraries (install via Library Manager / Arduino IDE):
- *   - arduino-audio-tools  by Phil Schatzmann  (AudioTools)
+ * Libraries (install via Library Manager):
+ *   - AMY                  by shorepine / AllMusicYes  (github.com/shorepine/amy)
  *   - U8g2                 by Oliver Kraus
  *   - LittleFS             (built-in ESP32 Arduino core)
  *
@@ -35,12 +35,12 @@
  *   └─────────────────────────────────────┘
  */
 
-// ─── Library includes — must come before local headers ────────────────────────
-// AudioTools by Phil Schatzmann  (Library Manager: "arduino-audio-tools")
-#include "AudioTools.h"
-// U8g2 display driver — included via ui.h
-// LittleFS flash FS — included via storage.h
-// Wire (I2C) — included via ui.h
+// ─── AMY synthesis engine ─────────────────────────────────────────────────────
+// AMY must be included via extern "C" — it is a pure C library.
+// Install: https://github.com/shorepine/amy  (Arduino Library Manager: "AMY")
+extern "C" {
+#include <amy.h>
+}
 
 #include "config.h"
 #include "synth.h"
@@ -60,23 +60,6 @@ Storage      storage;
 Controls     controls;
 UI           ui(&sequencer, &synthEngine);
 
-// AudioTools I2S output
-I2SStream    i2sOut;
-
-// Audio task handle
-TaskHandle_t audioTaskHandle = nullptr;
-
-// ─── Audio task (Core 0) ──────────────────────────────────────────────────────
-
-static int16_t audioBuf[AUDIO_BUFFER_SZ * 2];  // stereo frames, static = DRAM
-
-void audioTask(void* param) {
-    for (;;) {
-        synthEngine.process(audioBuf, AUDIO_BUFFER_SZ);
-        i2sOut.write((uint8_t*)audioBuf, sizeof(audioBuf));
-    }
-}
-
 // ─── Setup ────────────────────────────────────────────────────────────────────
 
 void setup() {
@@ -84,9 +67,33 @@ void setup() {
     delay(200);
     Serial.println("[SPARK] Sequencer booting...");
 
-    // PCM5102 soft-mute pin — pull HIGH to enable DAC
+    // PCM5102 soft-mute pin — pull HIGH to enable DAC output
     pinMode(PIN_PCM_SD, OUTPUT);
-    digitalWrite(PIN_PCM_SD, LOW);  // mute during init
+    digitalWrite(PIN_PCM_SD, LOW);   // mute during init
+
+    // ── AMY init ───────────────────────────────────────────────────────────
+    // AMY manages its own I2S output and FreeRTOS audio task internally.
+    amy_config_t amyCfg         = amy_default_config();
+    amyCfg.audio                = AMY_AUDIO_IS_I2S;
+    amyCfg.i2s_bclk             = PIN_I2S_BCK;
+    amyCfg.i2s_lrc              = PIN_I2S_WS;
+    amyCfg.i2s_dout             = PIN_I2S_DATA;
+    amyCfg.features.reverb      = 1;
+    amyCfg.features.echo        = 1;
+    amyCfg.features.chorus      = 0;
+    amyCfg.features.default_synths = 1;  // creates synth channel 1
+    amyCfg.max_oscs             = 128;
+    amyCfg.max_voices           = 32;
+    amyCfg.max_synths           = 8;
+    amyCfg.midi                 = AMY_MIDI_IS_NONE;
+    amyCfg.platform.multicore   = 1;
+    amyCfg.platform.multithread = 1;
+    amy_start(amyCfg);
+    Serial.println("[AMY] started");
+
+    // Unmute PCM5102 after AMY is running
+    delay(50);
+    digitalWrite(PIN_PCM_SD, HIGH);
 
     // ── Storage ────────────────────────────────────────────────────────────
     if (!storage.begin()) {
@@ -115,40 +122,8 @@ void setup() {
         }
     }
 
-    // Load first pattern's synth params
+    // Apply first pattern's synth params
     synthEngine.setParams(sequencer.getCurrentPattern().synth);
-
-    // ── I2S / PCM5102 ──────────────────────────────────────────────────────
-    // AudioTools I2SConfig field names: dma_buf_count / dma_buf_len (frames).
-    // i2s_format and buffer_size are NOT part of the public API — omit them.
-    auto cfg            = i2sOut.defaultConfig(TX_MODE);
-    cfg.pin_bck         = PIN_I2S_BCK;
-    cfg.pin_ws          = PIN_I2S_WS;
-    cfg.pin_data        = PIN_I2S_DATA;
-    cfg.sample_rate     = SAMPLE_RATE;
-    cfg.channels        = AUDIO_CHANNELS;
-    cfg.bits_per_sample = BITS_PER_SAMPLE;
-    cfg.dma_buf_len     = AUDIO_BUFFER_SZ;   // frames per DMA buffer
-    cfg.dma_buf_count   = DMA_BUF_COUNT;     // number of DMA buffers
-
-    if (!i2sOut.begin(cfg)) {
-        Serial.println("[ERR] I2S init failed!");
-    }
-
-    // Unmute PCM5102
-    delay(50);
-    digitalWrite(PIN_PCM_SD, HIGH);
-
-    // ── Audio task on Core 0 ───────────────────────────────────────────────
-    xTaskCreatePinnedToCore(
-        audioTask,
-        "audio",
-        8192,               // stack — sinf/powf + voice processing needs headroom
-        nullptr,
-        configMAX_PRIORITIES - 1,  // highest priority
-        &audioTaskHandle,
-        0                   // Core 0
-    );
 
     // ── Controls ───────────────────────────────────────────────────────────
     controls.begin();
@@ -158,7 +133,7 @@ void setup() {
 
     Serial.println("[SPARK] Boot complete.");
 
-    // Demo: init first pattern with a simple C minor pentatonic line
+    // Demo pattern initialised with C minor pentatonic acid bass
     initDemoPattern();
 }
 
@@ -169,32 +144,33 @@ void initDemoPattern() {
     pat.rootNote = 0;  // C
     pat.scaleIdx = 9;  // Pentatonic Minor
 
-    // C3 minor pentatonic — MIDI notes: 48, 51, 53, 55, 58
+    // C3 minor pentatonic MIDI notes
     uint8_t pentatonicNotes[] = { 48, 51, 53, 55, 58, 60, 63, 65 };
 
     for (int s = 0; s < NUM_STEPS; s++) {
-        Step& step = pat.steps[s];
+        Step& step       = pat.steps[s];
         step.active      = true;
         step.note        = pentatonicNotes[s % 8];
-        step.velocity    = (s % 4 == 0) ? 110 : 80;  // strong beats
+        step.velocity    = (s % 4 == 0) ? 110 : 80;
         step.gate        = (s % 4 == 0) ? 80 : 60;
         step.probability = 100;
-        step.accent      = (s % 8 == 0);  // accent every half-bar
+        step.accent      = (s % 8 == 0);
         step.slide       = (s == 3 || s == 7 || s == 11);
     }
-    // Leave a few steps silent for groove
     pat.steps[5].active  = false;
     pat.steps[13].active = false;
 
-    pat.synth.mode        = SynthMode::BASS;
-    pat.synth.filterCutoff= 800;
-    pat.synth.filterRes   = 3.5f;
+    // BASS mode via AMY custom patch — acid-style ADSR
+    pat.synth.mode           = SynthMode::BASS;
+    pat.synth.filterCutoff   = 800.0f;
+    pat.synth.filterRes      = 3.5f;
     pat.synth.filterEnvDepth = 0.8f;
-    pat.synth.fEnvDec     = 0.12f;
-    pat.synth.attack      = 0.002f;
-    pat.synth.decay       = 0.3f;
-    pat.synth.sustain     = 0.0f;
-    pat.synth.portaTime   = 0.04f;
+    pat.synth.fEnvDec        = 0.12f;
+    pat.synth.attack         = 0.002f;
+    pat.synth.decay          = 0.3f;
+    pat.synth.sustain        = 0.0f;
+    pat.synth.release        = 0.08f;
+    pat.synth.portaTime      = 0.04f;
 
     synthEngine.setParams(pat.synth);
 }
@@ -214,7 +190,6 @@ void loop() {
         ui.handleEncPress();
     }
     if (controls.encoder.wasLongPress()) {
-        // Long encoder push = enter main menu from anywhere
         ui.handleBack();
     }
 
@@ -245,6 +220,3 @@ void loop() {
     // ── Display refresh ───────────────────────────────────────────────────
     ui.update();
 }
-
-// ─── Arduino entry point for Core 0 pre-task ─────────────────────────────────
-// (audioTask runs on Core 0 via FreeRTOS — setup1()/loop1() not used here)
