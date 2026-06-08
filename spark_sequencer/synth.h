@@ -4,20 +4,23 @@
 #include "scales.h"
 
 // ─── Enumerations ─────────────────────────────────────────────────────────────
-// NOTE: ANALOG is #defined 0xC0 by esp32-hal-gpio.h — use DUAL_OSC instead.
+// NOTE: ANALOG  is #defined 0xC0  by esp32-hal-gpio.h — use DUAL_OSC.
+// NOTE: NOISE   is #defined 0x5   by esp32-hal-gpio.h — use WAVE_NOISE.
+// NOTE: SINE / TRIANGLE / PULSE are #defined by amy.h — prefix all WaveType
+//       values with WAVE_ so the enum is never corrupted by those macros.
 
 enum class SynthMode : uint8_t {
-    DUAL_OSC = 0, // Dual oscillator analog (AMY custom patch 1024)
-    JUNO,         // DCO subtractive — AMY patches 0-127
-    FM,           // DX7 FM synthesis — AMY patches 128-255
-    BASS,         // Acid bass (TB-303 style, accent + slide)
-    PAD,          // Pad / strings — AMY Juno patch, slow ADSR
+    DUAL_OSC = 0, // Dual oscillator analog
+    JUNO,         // Juno DCO subtractive — AMY patches 0-127
+    FM,           // DX7 FM synthesis    — AMY patches 128-255
+    BASS,         // Acid bass (TB-303 style)
+    PAD,          // Pad / strings
     KEYS,         // Piano — AMY built-in patch 256
     NUM_MODES
 };
 
 enum class WaveType : uint8_t {
-    SINE = 0, TRIANGLE, SAW, SQUARE, PULSE, WAVE_NOISE, NUM_WAVES
+    WAVE_SINE = 0, WAVE_TRI, WAVE_SAW, WAVE_SQR, WAVE_PULSE, WAVE_NOISE, NUM_WAVES
 };
 
 enum class LFODest : uint8_t {
@@ -32,7 +35,7 @@ enum class ChorusMode : uint8_t {
     OFF = 0, MODE1, MODE2
 };
 
-// ─── FM algorithm descriptor (display only) ───────────────────────────────────
+// ─── FM algorithm descriptor (display / UI use) ───────────────────────────────
 
 struct FMAlgo {
     const char name[6];
@@ -52,31 +55,76 @@ static const FMAlgo FM_ALGOS[8] = {
     { "FDBK",  {false,false,false,true},{-1,-1,-1,0}, true },
 };
 
-// ─── FM patch presets (names only — actual sound from AMY DX7 patches) ────────
+// ─── FM patch presets ─────────────────────────────────────────────────────────
+// These populate SynthParams for UI display; actual sound uses AMY DX7 patches.
 
 struct FMPatch {
-    char name[12];
-    uint8_t algo;
+    char     name[12];
+    float    opRatio[NUM_FM_OPS];
+    float    opLevel[NUM_FM_OPS];
+    float    opDecay[NUM_FM_OPS];
+    float    opSustain[NUM_FM_OPS];
+    uint8_t  algo;
+    float    feedback;
+    float    filterCutoff;
+    float    filterRes;
 };
 
 static const FMPatch FM_PATCHES[FM_PATCHES_COUNT] = {
-    { "E.Piano",   0 }, { "Brass",     1 }, { "Bell",      6 }, { "DX Bass",   0 },
-    { "Strings",   3 }, { "Marimba",   2 }, { "Lead",      5 }, { "Organ",     6 },
-    { "FM Pad",    3 }, { "Synth",     0 }, { "Guitar",    1 }, { "Clav",      0 },
-    { "Choir",     3 }, { "FX Sweep",  0 }, { "Digital",   6 }, { "Sub Bass",  0 },
+    { "E.Piano",  {1,14,1,2},   {1.0,0.6,0.3,0.1}, {1.5,0.8,1.5,2.0}, {0.3,0,0.3,0},    0, 0.1f, 6000, 0.7f },
+    { "Brass",    {1,1,2,2},    {1.0,0.9,0.7,0.4}, {0.4,0.3,0.4,0.3}, {0.6,0.5,0.6,0.5}, 1, 0.0f, 5000, 1.0f },
+    { "Bell",     {1,2.8,5,7},  {1.0,0.6,0.4,0.2}, {2.0,1.0,0.5,0.3}, {0,0,0,0},         6, 0.0f, 8000, 0.5f },
+    { "DX Bass",  {1,2,2,3},    {1.0,1.0,0.8,0.3}, {0.1,0.1,0.3,0.5}, {0.3,0.1,0,0},     0, 0.4f, 3000, 2.0f },
+    { "Strings",  {1,1,2,3},    {1.0,0.7,0.5,0.3}, {3.0,2.0,1.5,1.0}, {0.7,0.5,0.3,0.2}, 3, 0.0f, 4000, 0.8f },
+    { "Marimba",  {1,4,1,1},    {1.0,0.5,0.3,0.1}, {0.3,0.2,0.5,0.5}, {0,0,0,0},         2, 0.0f, 7000, 0.5f },
+    { "Lead",     {1,2,3,1},    {1.0,0.3,0.2,0.0}, {1.0,0.5,0.3,0.0}, {0.5,0.3,0.1,0},   5, 0.3f, 6000, 1.0f },
+    { "Organ",    {1,2,3,4},    {1.0,0.7,0.5,0.3}, {8.0,8.0,8.0,8.0}, {1,1,1,1},          6, 0.0f, 8000, 0.5f },
+    { "FM Pad",   {1,1,2,2},    {1.0,0.8,0.6,0.4}, {4.0,3.0,2.0,1.5}, {0.6,0.5,0.4,0.3}, 3, 0.0f, 4000, 1.0f },
+    { "Synth",    {1,3,5,7},    {1.0,0.5,0.3,0.1}, {0.5,0.3,0.2,0.1}, {0.4,0.2,0.1,0},   0, 0.5f, 5000, 1.5f },
+    { "Guitar",   {1,2,1,1},    {1.0,0.4,0.2,0.1}, {0.4,0.3,0.8,0.8}, {0,0,0,0},          1, 0.1f, 6000, 0.7f },
+    { "Clav",     {1,2,4,8},    {1.0,0.6,0.3,0.1}, {0.2,0.1,0.1,0.1}, {0,0,0,0},          0, 0.0f, 7000, 0.8f },
+    { "Choir",    {1,1.5,2,3},  {1.0,0.7,0.5,0.3}, {5.0,4.0,3.0,2.0}, {0.7,0.6,0.5,0.3}, 3, 0.0f, 3500, 1.0f },
+    { "FX Sweep", {0.5,1,2,4},  {1.0,0.9,0.6,0.3}, {3.0,2.0,1.0,0.5}, {0.4,0.3,0.2,0.1}, 0, 0.3f, 2500, 2.5f },
+    { "Digital",  {1,7,13,17},  {1.0,0.4,0.2,0.1}, {0.3,0.2,0.1,0.1}, {0,0,0,0},          6, 0.0f, 8000, 0.5f },
+    { "Sub Bass", {1,0.5,2,3},  {1.0,0.8,0.4,0.2}, {0.2,0.4,0.3,0.2}, {0.5,0.4,0,0},      0, 0.2f, 2000, 2.0f },
 };
 
-// ─── Juno patch presets (names only — actual sound from AMY Juno patches) ─────
+// ─── Juno patch presets ───────────────────────────────────────────────────────
+// These populate SynthParams for UI display; actual sound uses AMY Juno patches.
 
 struct JunoPatch {
-    char name[12];
+    char       name[12];
+    float      pwm;          // pulse width 0.02-0.98
+    float      sawLevel;     // 0-1
+    float      subLevel;     // 0-1
+    float      noiseLevel;   // 0-1
+    float      hpfCutoff;    // Hz
+    float      lpfCutoff;    // Hz
+    float      lpfRes;       // Q
+    float      lfoRate;      // Hz
+    float      lfoFiltDepth; // 0-1
+    float      lfoPwmDepth;  // 0-1
+    ChorusMode chorus;
+    float      attack, decay, sustain, release;
 };
 
 static const JunoPatch JUNO_PATCHES[JUNO_PATCHES_COUNT] = {
-    { "JunoStrings" }, { "JunoBrass"  }, { "JunoBass"   }, { "JunoPad"    },
-    { "JunoLead"   }, { "JunoArp"    }, { "JunoPoly"   }, { "JunoFlute"  },
-    { "JunoChoir"  }, { "JunoKeys"   }, { "JunoFX"     }, { "JunoPWM"    },
-    { "JunoSaw"    }, { "JunoSub"    }, { "JunoNoise"  }, { "JunoFull"   },
+    { "JunoStrings", 0.5f, 0.8f, 0.3f, 0.0f, 40,  1200, 1.2f, 0.5f, 0.3f, 0.2f, ChorusMode::MODE1, 0.05f,0.5f,0.7f,0.8f },
+    { "JunoBrass",   0.3f, 1.0f, 0.0f, 0.0f, 80,  2500, 2.0f, 1.0f, 0.4f, 0.3f, ChorusMode::MODE1, 0.01f,0.3f,0.6f,0.3f },
+    { "JunoBass",    0.5f, 0.8f, 0.6f, 0.0f, 40,  800,  2.5f, 0.3f, 0.2f, 0.0f, ChorusMode::OFF,   0.01f,0.4f,0.4f,0.3f },
+    { "JunoPad",     0.7f, 0.5f, 0.0f, 0.0f, 20,  900,  1.0f, 0.4f, 0.5f, 0.4f, ChorusMode::MODE2, 0.3f, 0.8f,0.6f,1.2f },
+    { "JunoLead",    0.5f, 0.0f, 0.0f, 0.0f, 200, 3000, 1.5f, 2.0f, 0.2f, 0.3f, ChorusMode::OFF,   0.01f,0.2f,0.5f,0.2f },
+    { "JunoArp",     0.4f, 0.7f, 0.4f, 0.0f, 60,  1800, 1.8f, 3.0f, 0.3f, 0.2f, ChorusMode::MODE1, 0.01f,0.1f,0.5f,0.1f },
+    { "JunoPoly",    0.5f, 0.9f, 0.2f, 0.0f, 40,  2000, 1.0f, 0.6f, 0.2f, 0.2f, ChorusMode::MODE2, 0.02f,0.3f,0.7f,0.5f },
+    { "JunoFlute",   0.5f, 0.0f, 0.0f, 0.1f, 500, 4000, 0.8f, 4.0f, 0.3f, 0.0f, ChorusMode::MODE1, 0.05f,0.2f,0.6f,0.4f },
+    { "JunoChoir",   0.6f, 0.5f, 0.0f, 0.1f, 60,  1500, 1.5f, 0.3f, 0.6f, 0.5f, ChorusMode::MODE2, 0.1f, 0.5f,0.7f,1.0f },
+    { "JunoKeys",    0.5f, 0.8f, 0.0f, 0.0f, 120, 3000, 1.2f, 0.0f, 0.0f, 0.0f, ChorusMode::OFF,   0.01f,0.4f,0.3f,0.5f },
+    { "JunoFX",      0.9f, 0.5f, 0.0f, 0.3f, 30,  700,  3.5f, 5.0f, 0.7f, 0.6f, ChorusMode::MODE2, 0.2f, 1.0f,0.4f,2.0f },
+    { "JunoPWM",     0.1f, 0.0f, 0.0f, 0.0f, 40,  2500, 1.0f, 1.5f, 0.0f, 0.8f, ChorusMode::MODE1, 0.02f,0.3f,0.6f,0.4f },
+    { "JunoSaw",     0.5f, 1.0f, 0.0f, 0.0f, 40,  2000, 1.5f, 0.0f, 0.0f, 0.0f, ChorusMode::MODE2, 0.01f,0.2f,0.8f,0.3f },
+    { "JunoSub",     0.5f, 0.5f, 1.0f, 0.0f, 20,  600,  1.8f, 0.2f, 0.1f, 0.0f, ChorusMode::OFF,   0.01f,0.6f,0.5f,0.4f },
+    { "JunoNoise",   0.5f, 0.0f, 0.0f, 1.0f, 20,  3000, 2.0f, 0.0f, 0.0f, 0.0f, ChorusMode::OFF,   0.05f,0.5f,0.3f,1.0f },
+    { "JunoFull",    0.5f, 0.7f, 0.4f, 0.1f, 40,  1600, 1.5f, 1.0f, 0.3f, 0.3f, ChorusMode::MODE1, 0.02f,0.4f,0.6f,0.5f },
 };
 
 // ─── Synth Parameters (saved per pattern) ─────────────────────────────────────
@@ -84,13 +132,13 @@ static const JunoPatch JUNO_PATCHES[JUNO_PATCHES_COUNT] = {
 struct SynthParams {
     SynthMode mode        = SynthMode::DUAL_OSC;
 
-    // ── Oscillator ────────────────────────────────────────────────────────────
-    WaveType  osc1Wave    = WaveType::SAW;
+    // ── Oscillators ───────────────────────────────────────────────────────────
+    WaveType  osc1Wave    = WaveType::WAVE_SAW;
     float     osc1Level   = 1.0f;
-    WaveType  osc2Wave    = WaveType::SQUARE;
+    WaveType  osc2Wave    = WaveType::WAVE_SQR;
     float     osc2Level   = 0.5f;
-    float     osc2Detune  = 0.07f;   // semitones (fine)
-    float     osc2Coarse  = 0.0f;    // semitones (integer)
+    float     osc2Detune  = 0.07f;
+    float     osc2Coarse  = 0.0f;
 
     // ── Mix ───────────────────────────────────────────────────────────────────
     float     noiseLevel  = 0.0f;
@@ -119,7 +167,7 @@ struct SynthParams {
     float     fEnvRel   = 0.15f;
 
     // ── LFO ──────────────────────────────────────────────────────────────────
-    WaveType  lfoWave    = WaveType::SINE;
+    WaveType  lfoWave    = WaveType::WAVE_SINE;
     float     lfoRate    = 2.0f;
     float     lfoDepth   = 0.0f;
     LFODest   lfoDest    = LFODest::DEST_NONE;
@@ -167,7 +215,7 @@ public:
     void     noteOff(uint8_t note);
     void     allNotesOff();
 
-    // Live parameter updates (send delta event to AMY)
+    // Live parameter delta updates
     void     setFilterCutoff(float hz);
     void     setFilterResonance(float q);
     void     setLFORate(float hz);

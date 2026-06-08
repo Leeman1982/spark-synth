@@ -35,13 +35,8 @@
  *   └─────────────────────────────────────┘
  */
 
-// ─── AMY synthesis engine ─────────────────────────────────────────────────────
-// AMY must be included via extern "C" — it is a pure C library.
-// Install: https://github.com/shorepine/amy  (Arduino Library Manager: "AMY")
-extern "C" {
-#include <amy.h>
-}
-
+// Local headers first — they must be parsed before amy.h defines its macros
+// (SINE, PULSE, TRIANGLE, NOISE etc.) to prevent enum corruption.
 #include "config.h"
 #include "synth.h"
 #include "sequencer.h"
@@ -50,6 +45,13 @@ extern "C" {
 #include "storage.h"
 #include "ui.h"
 #include "scales.h"
+
+// AMY synthesis engine — include AFTER local headers.
+// AMY is a pure C library; extern "C" is required.
+// Install: https://github.com/shorepine/amy  (Arduino Library Manager: "AMY")
+extern "C" {
+#include <amy.h>
+}
 
 // ─── Global objects ───────────────────────────────────────────────────────────
 
