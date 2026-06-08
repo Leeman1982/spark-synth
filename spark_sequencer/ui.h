@@ -108,8 +108,8 @@ private:
     Sequencer*   _seq;
     SynthEngine* _engine;
 
-    // U8g2 instance — SH1106 1.3" 128×64 I2C
-    U8G2_SH1106_128X64_NONAME_F_HW_I2C _u8g2;
+    // U8g2 instance — 128×64 I2C (SSD1306 driver, matches original spark-synth)
+    U8G2_SSD1306_128X64_NONAME_F_HW_I2C _u8g2;
 
     Screen    _screen    = Screen::MAIN;
     Screen    _prevScreen= Screen::MAIN;

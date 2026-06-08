@@ -4,7 +4,7 @@
  * Hardware:
  *   MCU  : ESP32-S3 N16R8 (16 MB Flash, 8 MB PSRAM)
  *   Audio: PCM5102 I2S DAC → 3.5 mm TRS stereo
- *   OLED : EstarDyn 1.3" SH1106 128×64 I2C + EC11 encoder + BACK/CONFIRM
+ *   OLED : 1.3" 128×64 I2C (SSD1306 driver) + EC11 encoder + BACK/CONFIRM
  *   MIDI : 3.5 mm TRS out (UART1 31250 baud)
  *   Flash: Internal LittleFS (patterns / settings)
  *
