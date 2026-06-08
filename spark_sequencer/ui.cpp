@@ -31,9 +31,12 @@ static const char* const CHORUS_NAMES[] = {
 
 UI::UI(Sequencer* seq, SynthEngine* engine)
     : _seq(seq), _engine(engine),
-      _u8g2(U8G2_R0, U8X8_PIN_NONE, PIN_OLED_SCL, PIN_OLED_SDA) {}
+      _u8g2(U8G2_R0, U8X8_PIN_NONE) {}
 
 void UI::begin() {
+    // ESP32-S3 equivalent of RP2040's Wire.setSDA/setSCL — must come before u8g2.begin()
+    Wire.begin(PIN_OLED_SDA, PIN_OLED_SCL);
+    Wire.setClock(OLED_I2C_FREQ);
     _u8g2.begin();
     _u8g2.setContrast(220);
     _dirty = true;
