@@ -1,7 +1,6 @@
 #pragma once
 #include <Arduino.h>
 #include <U8g2lib.h>
-#include <Wire.h>
 #include "config.h"
 #include "synth.h"
 #include "sequencer.h"
@@ -108,8 +107,8 @@ private:
     Sequencer*   _seq;
     SynthEngine* _engine;
 
-    // U8g2 instance — SH1106 1.3" 128×64 I2C
-    U8G2_SH1106_128X64_NONAME_F_HW_I2C _u8g2;
+    // SW_I2C: bit-bangs directly on the GPIO — no Wire library conflicts on ESP32-S3
+    U8G2_SH1106_128X64_NONAME_F_SW_I2C _u8g2;
 
     Screen    _screen    = Screen::MAIN;
     Screen    _prevScreen= Screen::MAIN;

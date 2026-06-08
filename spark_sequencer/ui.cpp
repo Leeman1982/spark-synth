@@ -2,7 +2,7 @@
 #include "storage.h"
 #include "scales.h"
 #include <math.h>
-#include <string.h>   // strcpy, snprintf
+#include <string.h>
 
 extern Storage storage;
 
@@ -31,14 +31,21 @@ static const char* const CHORUS_NAMES[] = {
 
 UI::UI(Sequencer* seq, SynthEngine* engine)
     : _seq(seq), _engine(engine),
-      _u8g2(U8G2_R0, U8X8_PIN_NONE) {}
+      _u8g2(U8G2_R0, PIN_OLED_SCL, PIN_OLED_SDA, U8X8_PIN_NONE) {}
 
 void UI::begin() {
-    // ESP32-S3 equivalent of RP2040's Wire.setSDA/setSCL — must come before u8g2.begin()
-    Wire.begin(PIN_OLED_SDA, PIN_OLED_SCL);
-    Wire.setClock(OLED_I2C_FREQ);
     _u8g2.begin();
     _u8g2.setContrast(220);
+
+    // Startup splash — visible immediately so you can confirm display is alive
+    _u8g2.clearBuffer();
+    _u8g2.setFont(u8g2_font_7x14B_tr);
+    _u8g2.drawStr(28, 36, "SPARK SYNTH");
+    _u8g2.setFont(u8g2_font_5x7_tr);
+    _u8g2.drawStr(38, 52, "Loading...");
+    _u8g2.sendBuffer();
+    delay(800);
+
     _dirty = true;
 }
 
