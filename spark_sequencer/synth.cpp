@@ -211,6 +211,14 @@ void SynthEngine::setParams(const SynthParams& p) {
     sendEffects();
 }
 
+// Re-send envelope/filter/effects without re-running configMode() —
+// use for live parameter tweaks where voice reallocation would glitch.
+void SynthEngine::refresh() {
+    sendAdsr();
+    sendFilter();
+    sendEffects();
+}
+
 // ─── Note on / off ────────────────────────────────────────────────────────────
 
 void SynthEngine::noteOn(uint8_t note, uint8_t vel, bool accent, bool slide) {

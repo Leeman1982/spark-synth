@@ -58,10 +58,11 @@ public:
     uint16_t getBPM() const { return _bpm; }
     void    nudgeBPM(int delta);
 
-    // Called from timer ISR or tight loop — advances sequencer clock
-    void tick();  // call at ~480 PPQ or use update() with millis
+    // MIDI clock out (24 PPQN) + start/stop messages
+    void setMidiClock(bool en) { _midiClock = en; }
+    bool midiClockOut() const  { return _midiClock; }
 
-    // Called from main loop — handles all timing via millis()
+    // Called from main loop — handles all timing via micros()
     void update();
 
     // Current state
@@ -95,15 +96,15 @@ private:
     PlayState    _playState  = PlayState::STOPPED;
     uint8_t      _patIdx     = 0;
     uint8_t      _step       = 0;
-    uint8_t      _subStep    = 0;   // for gate timing
     uint16_t     _bpm        = BPM_DEFAULT;
+    bool         _midiClock  = false;
 
     unsigned long _lastStepUs  = 0;
     unsigned long _stepIntervalUs = 0;  // microseconds per step
     unsigned long _gateOffUs   = 0;    // when to send note off
-    bool          _noteActive  = false;
+    unsigned long _nextClockUs = 0;    // next MIDI clock tick
     uint8_t       _activeNote  = 0;
-    uint8_t       _activeVelocity = 0;
+    uint8_t       _activeChannel = 1;  // channel the active note was sent on
     bool          _pendingNoteOff = false;
 
     Pattern      _patterns[NUM_PATTERNS];

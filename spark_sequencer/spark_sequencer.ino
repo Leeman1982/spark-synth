@@ -69,6 +69,9 @@ void setup() {
     delay(200);
     Serial.println("[SPARK] Sequencer booting...");
 
+    // Seed RNG (step probability) from hardware entropy
+    randomSeed(esp_random());
+
     // PCM5102 soft-mute pin — pull HIGH to enable DAC output
     pinMode(PIN_PCM_SD, OUTPUT);
     digitalWrite(PIN_PCM_SD, LOW);   // mute during init
@@ -114,8 +117,10 @@ void setup() {
 
     // Load saved patterns and settings
     GlobalSettings gs;
-    if (storage.loadSettings(gs)) {
+    bool haveSettings = storage.loadSettings(gs);
+    if (haveSettings) {
         sequencer.setBPM(gs.bpm);
+        sequencer.setMidiClock(gs.midiClockOut);
     }
     for (uint8_t i = 0; i < NUM_PATTERNS; i++) {
         Pattern pat;
@@ -123,8 +128,16 @@ void setup() {
             sequencer.getPattern(i) = pat;
         }
     }
+    if (haveSettings && gs.lastPattern < NUM_PATTERNS) {
+        sequencer.setPattern(gs.lastPattern);
+    }
 
-    // Apply first pattern's synth params
+    // Demo pattern only on first boot — never clobber a saved pattern
+    if (!storage.patternExists(0)) {
+        initDemoPattern();
+    }
+
+    // Apply current pattern's synth params
     synthEngine.setParams(sequencer.getCurrentPattern().synth);
 
     // ── Controls ───────────────────────────────────────────────────────────
@@ -134,9 +147,6 @@ void setup() {
     ui.begin();
 
     Serial.println("[SPARK] Boot complete.");
-
-    // Demo pattern initialised with C minor pentatonic acid bass
-    initDemoPattern();
 }
 
 // ─── Demo pattern ─────────────────────────────────────────────────────────────
@@ -173,13 +183,15 @@ void initDemoPattern() {
     pat.synth.sustain        = 0.0f;
     pat.synth.release        = 0.08f;
     pat.synth.portaTime      = 0.04f;
-
-    synthEngine.setParams(pat.synth);
 }
 
 // ─── Loop (Core 1 — UI + Sequencer) ──────────────────────────────────────────
 
 void loop() {
+    // Sequencer clock first — it's the most timing-sensitive consumer,
+    // and a display redraw later in the loop can block for milliseconds.
+    sequencer.update();
+
     controls.update();
 
     // ── Encoder input ─────────────────────────────────────────────────────
@@ -215,9 +227,6 @@ void loop() {
     if (controls.btnShift.wasPressed()) {
         ui.handleShift();
     }
-
-    // ── Sequencer clock ───────────────────────────────────────────────────
-    sequencer.update();
 
     // ── Display refresh ───────────────────────────────────────────────────
     ui.update();

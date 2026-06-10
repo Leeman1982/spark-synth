@@ -38,20 +38,11 @@
 
 // ─── Audio ────────────────────────────────────────────────────────────────────
 #define SAMPLE_RATE       44100
-#define AUDIO_CHANNELS    2
-#define BITS_PER_SAMPLE   16
-#define AUDIO_BUFFER_SZ   256   // frames per write
-#define DMA_BUF_COUNT     4
 
 // ─── Synthesis ────────────────────────────────────────────────────────────────
-#define NUM_VOICES        8
 #define NUM_FM_OPS        4
 #define FM_PATCHES_COUNT  16
 #define JUNO_PATCHES_COUNT 16
-#define DELAY_BUF_LEN     11025  // 0.25 s max delay at 44100
-#define REVERB_COMBS      6
-#define REVERB_ALLPASS    2
-#define KS_BUF_MAX        1024   // KS max buf (~lowest MIDI note 40=82Hz → 537 samples)
 
 // ─── Sequencer ────────────────────────────────────────────────────────────────
 #define NUM_STEPS         16
@@ -66,7 +57,6 @@
 #define DISP_W            128
 #define DISP_H            64
 #define HEADER_H          10
-#define FOOTER_H          9
 #define STEP_CELL_W       16    // 128 / 8 steps per row
 #define STEP_CELL_H       13
 #define STEP_ROW1_Y       11
@@ -76,7 +66,9 @@
 #define UI_REFRESH_MS     33    // ~30 fps
 #define DEBOUNCE_MS       8
 #define LONG_PRESS_MS     600
-#define ENCODER_FAST_THRESH 4   // ticks before fast-scroll kicks in
+// EC11 encoders emit 4 quadrature transitions per detent click.
+// Set to 2 or 1 if your encoder feels like it needs two clicks per step.
+#define ENC_TICKS_PER_DETENT 4
 
 // ─── Storage ─────────────────────────────────────────────────────────────────
 #define STORAGE_MAGIC     0x5351   // "SQ"

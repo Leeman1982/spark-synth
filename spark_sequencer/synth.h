@@ -208,7 +208,8 @@ public:
     SynthEngine() {}
 
     void     begin(float sampleRate = SAMPLE_RATE);
-    void     setParams(const SynthParams& p);
+    void     setParams(const SynthParams& p);   // full reconfig (voices, patch)
+    void     refresh();                          // ADSR/filter/effects only — cheap
     SynthParams& getParams() { return _p; }
 
     void     noteOn(uint8_t note, uint8_t vel, bool accent = false, bool slide = false);

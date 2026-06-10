@@ -65,10 +65,14 @@ void UI::popScreen() {
 // ─── Main update ─────────────────────────────────────────────────────────────
 
 void UI::update() {
-    // Rate-limit redraws
+    // A full SW-I2C frame blocks the loop for many milliseconds, so only
+    // draw when something changed (dirty) or the screen is animated
+    // (playhead/progress while playing, tempo dot on BPM edit) — and never
+    // faster than UI_REFRESH_MS.
     unsigned long now = millis();
-    bool playStateChanged = (_seq->getPlayState() == PlayState::PLAYING);
-    if (_dirty || (now - _lastDraw >= UI_REFRESH_MS)) {
+    bool animated = (_seq->getPlayState() == PlayState::PLAYING) ||
+                    (_screen == Screen::BPM_EDIT);
+    if ((_dirty || animated) && (now - _lastDraw >= UI_REFRESH_MS)) {
         _lastDraw = now;
         drawAll();
         _dirty = false;
@@ -104,13 +108,15 @@ void UI::handleEncoder(int delta) {
             if (_synthEditing) {
                 changeSynthParam(delta);
             } else {
-                // Scroll through visible params
-                int next = (int)_synthSel + delta;
-                next = constrain(next, 0, (int)SynthParamID::NUM_PARAMS - 1);
-                _synthSel = (SynthParamID)next;
-                // Adjust scroll window (show 4 rows, header + 3 params)
-                if ((int)_synthSel < _synthScroll)       _synthScroll = (int)_synthSel;
-                if ((int)_synthSel >= _synthScroll + 4)  _synthScroll = (int)_synthSel - 3;
+                // Walk selection through VISIBLE params only
+                int dir = (delta > 0) ? 1 : -1;
+                for (int n = 0; n < abs(delta); n++) {
+                    _synthSel = stepVisibleParam(_synthSel, dir);
+                }
+                // Scroll window tracks the visible-row index (6 rows shown)
+                int vis = visibleIndexOf(_synthSel);
+                if (vis < _synthScroll)      _synthScroll = vis;
+                if (vis >= _synthScroll + 6) _synthScroll = vis - 5;
             }
             break;
 
@@ -145,17 +151,15 @@ void UI::handleEncoder(int delta) {
         }
 
         case Screen::MIDI_SETTINGS:
-            if (_editMode) {
-                _midiClkTmp = delta > 0;
-            } else {
-                _midiChTmp = (uint8_t)constrain((int)_midiChTmp + delta, 1, 16);
-            }
+            _midiChTmp = (uint8_t)constrain((int)_midiChTmp + delta, 1, 16);
             break;
 
         case Screen::PATTERN_OPTS: {
             Pattern& p = _seq->getCurrentPattern();
-            if (_synthSel == SynthParamID::MODE) {  // reuse _synthSel as row cursor
-                p.length = (uint8_t)constrain((int)p.length + delta, 1, 16);
+            switch (_patOptSel) {
+                case 0: p.length      = (uint8_t)constrain((int)p.length + delta, 1, NUM_STEPS); break;
+                case 1: p.midiChannel = (uint8_t)constrain((int)p.midiChannel + delta, 1, 16);   break;
+                case 2: p.swing       = (uint8_t)constrain((int)p.swing + delta, 0, SWING_MAX);  break;
             }
             break;
         }
@@ -198,6 +202,11 @@ void UI::handleEncPress() {
         case Screen::MAIN_MENU:
             // Activate selected menu item
             switch(_menuSel) {
+                case MenuItem::SEQ_STEP_EDIT:
+                    _stepField   = StepField::NOTE;
+                    _stepEditing = false;
+                    pushScreen(Screen::STEP_EDIT);
+                    break;
                 case MenuItem::SEQ_BPM:
                     _bpmTmp = _seq->getBPM();
                     pushScreen(Screen::BPM_EDIT);
@@ -207,7 +216,14 @@ void UI::handleEncPress() {
                     pushScreen(Screen::PATTERN_SEL);
                     break;
                 case MenuItem::PAT_OPTIONS:
+                    _patOptSel = 0;
                     pushScreen(Screen::PATTERN_OPTS);
+                    break;
+                case MenuItem::SCALE_SEL:
+                    _scaleTmp = _seq->getCurrentPattern().scaleIdx;
+                    _rootTmp  = _seq->getCurrentPattern().rootNote;
+                    _editMode = false;
+                    pushScreen(Screen::SCALE_SEL);
                     break;
                 case MenuItem::SYNTH_MODE:
                     _modeTmp = _engine->getParams().mode;
@@ -224,6 +240,7 @@ void UI::handleEncPress() {
                     break;
                 case MenuItem::MIDI_SETTINGS:
                     _midiChTmp  = _seq->midiChannel();
+                    _midiClkTmp = _seq->midiClockOut();
                     pushScreen(Screen::MIDI_SETTINGS);
                     break;
                 case MenuItem::SETTINGS:
@@ -231,6 +248,14 @@ void UI::handleEncPress() {
                     break;
                 default: break;
             }
+            break;
+
+        case Screen::PATTERN_OPTS:
+            _patOptSel = (_patOptSel + 1) % 3;   // cycle LEN → MIDI CH → SWING
+            break;
+
+        case Screen::MIDI_SETTINGS:
+            _midiClkTmp = !_midiClkTmp;
             break;
 
         case Screen::SYNTH_MODE:
@@ -296,6 +321,7 @@ void UI::handleEncPress() {
                 default: break;
             }
             _seq->getCurrentPattern().synth = _engine->getParams();
+            _engine->setParams(_engine->getParams());   // push to AMY
             popScreen();
             break;
 
@@ -328,7 +354,9 @@ void UI::handleBack() {
             }
             break;
         case Screen::MAIN_MENU:
-            popScreen();
+            // Always exit to MAIN — _prevScreen may point back at the menu
+            // after a sub-screen pop, which would trap the user here.
+            _screen = Screen::MAIN;
             break;
         default:
             popScreen();
@@ -357,6 +385,11 @@ void UI::handleConfirm() {
             _seq->quantizePattern(_seq->currentPattern());
             popScreen();
             break;
+        case Screen::MIDI_SETTINGS:
+            _seq->getCurrentPattern().midiChannel = _midiChTmp;
+            _seq->setMidiClock(_midiClkTmp);
+            popScreen();
+            break;
         default:
             popScreen();
             break;
@@ -370,9 +403,15 @@ void UI::handleShift() {
 
 void UI::handleLongBack() {
     if (_screen == Screen::MAIN) {
-        // Long-press back on main = save current pattern
+        // Long-press back on main = save current pattern + global settings
         storage.savePattern(_seq->currentPattern(), _seq->getCurrentPattern());
-        // Brief feedback — dirty flag will show confirmation
+        GlobalSettings gs;
+        gs.bpm          = _seq->getBPM();
+        gs.lastPattern  = _seq->currentPattern();
+        gs.midiClockOut = _seq->midiClockOut();
+        gs.midiChannel  = _seq->midiChannel();
+        gs.masterVol    = _engine->getParams().masterVol;
+        storage.saveSettings(gs);
         _dirty = true;
     }
 }
@@ -751,41 +790,49 @@ void UI::changeSynthParam(int delta) {
         case SynthParamID::MODE: {
             int v = (int)p.mode + delta;
             setSynthParamI(id, constrain(v, 0, (int)SynthMode::NUM_MODES - 1));
+            applyEngine(id);
             return;
         }
         case SynthParamID::OSC1_WAVE: {
             int v = (int)p.osc1Wave + delta;
             setSynthParamI(id, constrain(v, 0, (int)WaveType::NUM_WAVES - 1));
+            applyEngine(id);
             return;
         }
         case SynthParamID::OSC2_WAVE: {
             int v = (int)p.osc2Wave + delta;
             setSynthParamI(id, constrain(v, 0, (int)WaveType::NUM_WAVES - 1));
+            applyEngine(id);
             return;
         }
         case SynthParamID::LFO_WAVE: {
             int v = (int)p.lfoWave + delta;
             setSynthParamI(id, constrain(v, 0, (int)WaveType::NUM_WAVES - 1));
+            applyEngine(id);
             return;
         }
         case SynthParamID::LFO_DEST: {
             int v = (int)p.lfoDest + delta;
             setSynthParamI(id, constrain(v, 0, (int)LFODest::NUM_DESTS - 1));
+            applyEngine(id);
             return;
         }
         case SynthParamID::FILTER_MODE: {
             int v = (int)p.filterMode + delta;
             setSynthParamI(id, constrain(v, 0, 3));
+            applyEngine(id);
             return;
         }
         case SynthParamID::CHORUS_MODE: {
             int v = (int)p.chorus + delta;
             setSynthParamI(id, constrain(v, 0, 2));
+            applyEngine(id);
             return;
         }
         case SynthParamID::FM_ALGO: {
             int v = (int)p.fmAlgo + delta;
             setSynthParamI(id, constrain(v, 0, 7));
+            applyEngine(id);
             return;
         }
         case SynthParamID::JUNO_PATCH: {
@@ -803,6 +850,7 @@ void UI::changeSynthParam(int delta) {
             p.filterRes  = jp.lpfRes;
             p.lfoRate    = jp.lfoRate;
             p.chorus     = jp.chorus;
+            applyEngine(id);
             return;
         }
         case SynthParamID::FM_PATCH: {
@@ -818,6 +866,7 @@ void UI::changeSynthParam(int delta) {
             }
             p.fmAlgo = fp.algo;
             p.opFeedback = fp.feedback;
+            applyEngine(id);
             return;
         }
         default: break;
@@ -829,6 +878,51 @@ void UI::changeSynthParam(int delta) {
     float mx   = synthParamMax(id);
     float cur  = getSynthParamF(id);
     setSynthParamF(id, constrain(cur + delta * step, mn, mx));
+    applyEngine(id);
+}
+
+// ─── Engine apply ─────────────────────────────────────────────────────────────
+// Structural changes (mode, patch, oscillator setup) need a full voice
+// reconfig; everything else only needs the cheap ADSR/filter/FX refresh.
+
+void UI::applyEngine(SynthParamID id) {
+    switch(id) {
+        case SynthParamID::MODE:
+        case SynthParamID::JUNO_PATCH:
+        case SynthParamID::FM_PATCH:
+        case SynthParamID::FM_ALGO:
+        case SynthParamID::OSC1_WAVE:
+        case SynthParamID::OSC2_WAVE:
+        case SynthParamID::OSC1_LEVEL:
+        case SynthParamID::OSC2_LEVEL:
+        case SynthParamID::OSC2_DETUNE:
+        case SynthParamID::OSC2_COARSE:
+        case SynthParamID::NOISE_LEVEL:
+            _engine->setParams(_engine->getParams());
+            break;
+        default:
+            _engine->refresh();
+            break;
+    }
+}
+
+// ─── Visible-param navigation ─────────────────────────────────────────────────
+
+SynthParamID UI::stepVisibleParam(SynthParamID from, int dir) {
+    int i = (int)from;
+    while (true) {
+        i += dir;
+        if (i < 0 || i >= (int)SynthParamID::NUM_PARAMS) return from;
+        if (isSynthParamVisible((SynthParamID)i)) return (SynthParamID)i;
+    }
+}
+
+int UI::visibleIndexOf(SynthParamID id) {
+    int v = 0;
+    for (int i = 0; i < (int)id; i++) {
+        if (isSynthParamVisible((SynthParamID)i)) v++;
+    }
+    return v;
 }
 
 // ─── Drawing ─────────────────────────────────────────────────────────────────
@@ -846,6 +940,7 @@ void UI::drawAll() {
         case Screen::SCALE_SEL:     drawHeader(); drawScaleSel();     break;
         case Screen::BPM_EDIT:      drawBPMEdit();                   break;
         case Screen::MIDI_SETTINGS: drawHeader(); drawMIDISettings(); break;
+        case Screen::SETTINGS:      drawHeader(); drawSettings();     break;
         case Screen::MAIN_MENU:     drawHeader(); drawMainMenu();     break;
         default: drawHeader(); break;
     }
@@ -870,9 +965,9 @@ void UI::drawHeader() {
     snprintf(bpmBuf, sizeof(bpmBuf), "%3d", _seq->getBPM());
     _u8g2.drawStr(1, 7, bpmBuf);
 
-    // Play state indicator
-    const char* state = (_seq->getPlayState() == PlayState::PLAYING) ? "\x10" : "\x7f";
-    _u8g2.drawStr(20, 7, state);  // ▶ or ■
+    // Play state indicator (plain ASCII — control codes have no glyph in 4x6)
+    const char* state = (_seq->getPlayState() == PlayState::PLAYING) ? ">" : "-";
+    _u8g2.drawStr(20, 7, state);
 
     // Pattern number
     char patBuf[8];
@@ -901,6 +996,14 @@ void UI::drawStepCell(uint8_t step, uint8_t x, uint8_t y, bool cursor, bool play
     const Step& s = _seq->getStep(step);
     uint8_t w = STEP_CELL_W - 1;
     uint8_t h = STEP_CELL_H;
+
+    // Steps beyond the pattern length: just a centre dot, no cell
+    if (step >= _seq->getCurrentPattern().length) {
+        _u8g2.setDrawColor(1);
+        _u8g2.drawPixel(x + w / 2, y + h / 2);
+        if (cursor) _u8g2.drawFrame(x, y, w, h);
+        return;
+    }
 
     if (cursor || playing) {
         // Filled cell
@@ -1023,14 +1126,22 @@ void UI::drawStepEdit() {
 
     _u8g2.drawHLine(0, 22, DISP_W);
 
-    const int ROW_H = 9;
-    int y = 31;
+    // 7 fields don't fit below the title — show a 4-row window that
+    // scrolls to keep the selected field visible.
+    const int ROW_H   = 10;
+    const int VISIBLE = 4;
+    int first = constrain((int)_stepField - (VISIBLE - 1),
+                          0, (int)StepField::NUM_FIELDS - VISIBLE);
+    int y   = 32;
+    int idx = 0;
 
     auto row = [&](StepField field, const char* label, const char* val) {
+        int i = idx++;
+        if (i < first || i >= first + VISIBLE) return;
         bool sel = (field == _stepField);
         bool edit= sel && _stepEditing;
         if (sel) {
-            _u8g2.drawBox(0, y - 7, DISP_W, ROW_H);
+            _u8g2.drawBox(0, y - 8, DISP_W, ROW_H);
             _u8g2.setDrawColor(0);
         }
         _u8g2.setFont(u8g2_font_5x7_tr);
@@ -1181,13 +1292,24 @@ void UI::drawPatternOpts() {
     _u8g2.setFont(u8g2_font_5x7_tr);
     _u8g2.drawStr(0, 20, "PATTERN OPTIONS");
     _u8g2.drawHLine(0, 22, DISP_W);
+
     char buf[24];
+    auto row = [&](uint8_t idx, const char* text, int y) {
+        if (idx == _patOptSel) {
+            _u8g2.drawBox(0, y - 8, DISP_W, 10);
+            _u8g2.setDrawColor(0);
+        }
+        _u8g2.drawStr(2, y, text);
+        _u8g2.setDrawColor(1);
+    };
+
     snprintf(buf, sizeof(buf), "LEN : %d STEPS", pat.length);
-    _u8g2.drawStr(0, 33, buf);
+    row(0, buf, 33);
     snprintf(buf, sizeof(buf), "MIDI: CH %d", pat.midiChannel);
-    _u8g2.drawStr(0, 43, buf);
+    row(1, buf, 43);
     snprintf(buf, sizeof(buf), "SWING: %d%%", pat.swing);
-    _u8g2.drawStr(0, 53, buf);
+    row(2, buf, 53);
+
     snprintf(buf, sizeof(buf), "ROOT: %s  SCALE: %s",
              NOTE_NAMES[pat.rootNote], SCALES[pat.scaleIdx].name);
     _u8g2.setFont(u8g2_font_4x6_tr);
@@ -1282,7 +1404,7 @@ void UI::drawMIDISettings() {
 
 void UI::drawMainMenu() {
     static const char* MENU_LABELS[(int)MenuItem::NUM_ITEMS] = {
-        "STEP EDIT", "BPM", "PATTERN", "PAT OPTS",
+        "STEP EDIT", "BPM", "PATTERN", "PAT OPTS", "SCALE",
         "CHAIN", "SYNTH MODE", "SYNTH PARAMS", "MIDI", "SETTINGS"
     };
 

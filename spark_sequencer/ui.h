@@ -13,13 +13,12 @@ enum class Screen : uint8_t {
     SYNTH_MODE,    // Choose synth mode (ANALOG/JUNO/FM/BASS/PAD/KEYS)
     SYNTH_PARAMS,  // Edit synth parameters (scrollable list)
     PATTERN_SEL,   // Choose active pattern 1-8
-    PATTERN_OPTS,  // Pattern length, scale, root, swing
+    PATTERN_OPTS,  // Pattern length, MIDI channel, swing
     CHAIN_EDIT,    // Pattern chain setup
     SCALE_SEL,     // Scale + root note picker
     BPM_EDIT,      // BPM editor (big display)
     MIDI_SETTINGS, // MIDI channel, clock out
     SETTINGS,      // Master volume, save/load
-    SAVE_LOAD,     // Save/Load confirm dialog
     MAIN_MENU,     // Top-level menu overlay
 };
 
@@ -72,6 +71,7 @@ enum class MenuItem : uint8_t {
     SEQ_BPM,
     PAT_SELECT,
     PAT_OPTIONS,
+    SCALE_SEL,
     PAT_CHAIN,
     SYNTH_MODE,
     SYNTH_PARAMS,
@@ -131,8 +131,8 @@ private:
     // Pattern select state
     uint8_t   _patSel     = 0;
 
-    // Chain edit
-    uint8_t   _chainStep  = 0;
+    // Pattern options row cursor (0=length, 1=MIDI ch, 2=swing)
+    uint8_t   _patOptSel  = 0;
 
     // Scale select
     uint8_t   _scaleTmp   = 0;
@@ -166,7 +166,6 @@ private:
     void drawMIDISettings();
     void drawSettings();
     void drawMainMenu();
-    void drawSaveLoad(bool isSave);
 
     // Step cell helpers
     void drawStepCell(uint8_t step, uint8_t x, uint8_t y, bool cursor, bool playing);
@@ -192,4 +191,11 @@ private:
     void popScreen();
     void changeSynthParam(int delta);
     void changeStepField(int delta);
+
+    // Visible-param navigation (selection must skip params hidden by mode)
+    SynthParamID stepVisibleParam(SynthParamID from, int dir);
+    int          visibleIndexOf(SynthParamID id);
+
+    // Push edited params to the audio engine
+    void applyEngine(SynthParamID id);
 };

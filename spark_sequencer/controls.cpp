@@ -40,49 +40,55 @@ void IRAM_ATTR RotaryEncoder::isrB(void* arg) {
 }
 
 int RotaryEncoder::getDelta() {
+    // EC11: 4 quadrature transitions per detent — emit whole detents,
+    // keep the remainder so no motion is lost between calls.
     noInterrupts();
-    int d = _count;
-    _count = 0;
+    int d = _count / ENC_TICKS_PER_DETENT;
+    _count -= d * ENC_TICKS_PER_DETENT;
     interrupts();
     return d;
 }
 
-bool RotaryEncoder::wasPressed() {
-    uint8_t raw = digitalRead(_pinSW);
+void RotaryEncoder::update() {
+    bool raw = (digitalRead(_pinSW) == LOW);
     unsigned long now = millis();
 
-    if (raw == LOW && _swLast == HIGH) {
-        // Debounce
-        if (now - _pressTime > DEBOUNCE_MS) {
-            _pressTime  = now;
-            _pressed    = true;
-            _longFired  = false;
+    if (raw != _swRaw) {
+        _swDebounceT = now;
+        _swRaw = raw;
+    }
+
+    if ((now - _swDebounceT) > DEBOUNCE_MS) {
+        if (raw && !_swState) {
+            // Press edge
+            _swState   = true;
+            _swPressT  = now;
+            _longFired = false;
+        } else if (!raw && _swState) {
+            // Release edge — short press only if long didn't fire
+            _swState = false;
+            if (!_longFired) _pressedFlag = true;
         }
     }
-    _swLast = raw;
 
-    if (_pressed && raw == HIGH) {
-        _pressed = false;
-        if (!_longFired) return true;
+    // Long press fires once while still held
+    if (_swState && !_longFired && (now - _swPressT) >= LONG_PRESS_MS) {
+        _longFired = true;
+        _longFlag  = true;
     }
+}
+
+bool RotaryEncoder::wasPressed() {
+    if (_pressedFlag) { _pressedFlag = false; return true; }
     return false;
 }
 
 bool RotaryEncoder::isHeld() {
-    return digitalRead(_pinSW) == LOW;
+    return _swState;
 }
 
 bool RotaryEncoder::wasLongPress() {
-    uint8_t raw = digitalRead(_pinSW);
-    unsigned long now = millis();
-
-    if (raw == LOW && !_longFired) {
-        if (_pressTime > 0 && (now - _pressTime) >= LONG_PRESS_MS) {
-            _longFired = true;
-            return true;
-        }
-    }
-    if (raw == HIGH) _pressTime = now;  // reset on release
+    if (_longFlag) { _longFlag = false; return true; }
     return false;
 }
 
@@ -162,8 +168,8 @@ void Controls::begin() {
 }
 
 void Controls::update() {
+    encoder.update();   // rotation is ISR-driven; this polls the push switch
     btnBack.update();
     btnConfirm.update();
     btnShift.update();
-    // encoder is ISR-driven, no poll needed
 }

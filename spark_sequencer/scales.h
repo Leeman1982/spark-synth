@@ -36,22 +36,24 @@ static const char* const NOTE_NAMES[] = {
     "F#", "G", "G#", "A", "A#", "B"
 };
 
-// Quantize a MIDI note to the nearest note in the given scale/root
+// Quantize a MIDI note to the nearest note in the given scale/root.
+// Candidates are checked in adjacent octaves so notes near the octave
+// boundary snap to the closest degree (e.g. B → C above, not C below).
 inline uint8_t quantizeNote(uint8_t midiNote, uint8_t root, uint8_t scaleIdx) {
     if (scaleIdx == 0) return midiNote;  // chromatic — no quantize
     const Scale& sc = SCALES[scaleIdx];
     int octave   = midiNote / 12;
-    int semitone = midiNote % 12;
-    // shift relative to root
-    int rel = (semitone - root + 12) % 12;
-    // find nearest scale degree
-    int best = 0, bestDist = 12;
+    int bestNote = midiNote;
+    int bestDist = 128;
     for (int i = 0; i < sc.numNotes; i++) {
-        int dist = abs(rel - sc.intervals[i]);
-        if (dist < bestDist) { bestDist = dist; best = i; }
+        int base = root + sc.intervals[i];
+        for (int oct = octave - 1; oct <= octave + 1; oct++) {
+            int cand = oct * 12 + base;
+            int dist = abs(cand - (int)midiNote);
+            if (dist < bestDist) { bestDist = dist; bestNote = cand; }
+        }
     }
-    int quantRel = (sc.intervals[best] + root) % 12;
-    return (uint8_t)constrain(octave * 12 + quantRel, 0, 127);
+    return (uint8_t)constrain(bestNote, 0, 127);
 }
 
 // Get short note name (e.g. "C#4")
