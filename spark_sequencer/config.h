@@ -30,12 +30,6 @@
 #define PIN_MIDI_RX       2   // not used but reserve
 #define MIDI_BAUD         31250
 
-// External SPI Flash (W25Q64/128) — SPI2 (FSPI)
-#define PIN_FLASH_CS      3
-#define PIN_FLASH_CLK     12
-#define PIN_FLASH_MOSI    13
-#define PIN_FLASH_MISO    9
-
 // ─── Audio ────────────────────────────────────────────────────────────────────
 #define SAMPLE_RATE       44100
 
