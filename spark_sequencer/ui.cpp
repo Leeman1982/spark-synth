@@ -37,15 +37,29 @@ void UI::begin() {
     _u8g2.begin();
     _u8g2.setContrast(220);
 
-    // Startup splash — visible immediately so you can confirm display is alive
     _u8g2.clearBuffer();
-    _u8g2.setFont(u8g2_font_7x14B_tr);
-    _u8g2.drawStr(28, 36, "SPARK SYNTH");
-    _u8g2.setFont(u8g2_font_5x7_tr);
-    _u8g2.drawStr(38, 52, "Loading...");
-    _u8g2.sendBuffer();
-    delay(800);
 
+    // Thick top and bottom accent bars
+    _u8g2.drawBox(0, 0,          DISP_W, 3);
+    _u8g2.drawBox(0, DISP_H - 3, DISP_W, 3);
+
+    // Main title — large bold
+    _u8g2.setFont(u8g2_font_9x18B_tr);
+    const char* title = "SPARK";
+    uint8_t tw = _u8g2.getStrWidth(title);
+    _u8g2.drawStr((DISP_W - tw) / 2, 34, title);
+
+    // Thin separator below title
+    _u8g2.drawHLine(24, 38, DISP_W - 48);
+
+    // Subtitle
+    _u8g2.setFont(u8g2_font_4x6_tr);
+    const char* sub = "STEP SEQUENCER";
+    tw = _u8g2.getStrWidth(sub);
+    _u8g2.drawStr((DISP_W - tw) / 2, 49, sub);
+
+    _u8g2.sendBuffer();
+    delay(1200);
     _dirty = true;
 }
 
@@ -951,101 +965,113 @@ void UI::drawAll() {
 
 void UI::drawHeader() {
     const SynthParams& sp = _engine->getParams();
-    Pattern& pat = _seq->getCurrentPattern();
 
-    // Background bar
+    // Full-width inverted bar
     _u8g2.setDrawColor(1);
     _u8g2.drawBox(0, 0, DISP_W, HEADER_H);
-    _u8g2.setDrawColor(0);
+    _u8g2.setDrawColor(0);   // everything inside = white on black
 
+    bool playing = (_seq->getPlayState() == PlayState::PLAYING);
+
+    // Play/stop symbol (hand-drawn, 5px wide)
+    if (playing) {
+        // Right-pointing triangle ▶ — columns shrink toward the tip
+        _u8g2.drawVLine(1, 2, 7);   // left edge (tallest)
+        _u8g2.drawVLine(2, 3, 5);
+        _u8g2.drawVLine(3, 4, 3);
+        _u8g2.drawVLine(4, 5, 1);   // tip
+    } else {
+        _u8g2.drawBox(1, 2, 6, 6);  // filled square ■ (stop)
+    }
+
+    // BPM number (5x7 — most prominent element in header)
+    _u8g2.setFont(u8g2_font_5x7_tr);
+    char buf[8];
+    snprintf(buf, sizeof(buf), "%d", _seq->getBPM());
+    _u8g2.drawStr(8, 8, buf);
+
+    // Small labels and info (4x6)
     _u8g2.setFont(u8g2_font_4x6_tr);
+    _u8g2.drawStr(29, 8, "BPM");
 
-    // BPM (left)
-    char bpmBuf[12];
-    snprintf(bpmBuf, sizeof(bpmBuf), "%3d", _seq->getBPM());
-    _u8g2.drawStr(1, 7, bpmBuf);
-
-    // Play state indicator (plain ASCII — control codes have no glyph in 4x6)
-    const char* state = (_seq->getPlayState() == PlayState::PLAYING) ? ">" : "-";
-    _u8g2.drawStr(20, 7, state);
-
-    // Pattern number
-    char patBuf[8];
+    char patBuf[4];
     snprintf(patBuf, sizeof(patBuf), "P%d", _seq->currentPattern() + 1);
-    _u8g2.drawStr(29, 7, patBuf);
+    _u8g2.drawStr(48, 8, patBuf);
 
-    // Synth mode (centre)
-    const char* modeName = SYNTH_MODE_NAMES[(int)sp.mode];
-    int modeX = 55;
-    _u8g2.drawStr(modeX, 7, modeName);
+    _u8g2.drawStr(64, 8, SYNTH_MODE_NAMES[(int)sp.mode]);
 
-    // Scale name (right)
-    char scaleBuf[14];
-    snprintf(scaleBuf, sizeof(scaleBuf), "%s%s",
-             NOTE_NAMES[pat.rootNote],
-             SCALES[pat.scaleIdx].name);
-    int scaleW = _u8g2.getStrWidth(scaleBuf);
-    _u8g2.drawStr(DISP_W - scaleW - 1, 7, scaleBuf);
+    // Beat position indicator (4 squares, far right)
+    // Each square: 5×6 px, 1px gap between
+    uint8_t beat = (uint8_t)((_seq->currentStep() / 4) % 4);
+    for (int b = 0; b < 4; b++) {
+        uint8_t bx = (uint8_t)(104 + b * 6);
+        if (playing && b == (int)beat) {
+            _u8g2.drawBox(bx, 2, 5, 6);      // filled = current beat
+        } else {
+            _u8g2.drawFrame(bx, 2, 5, 6);    // hollow = other beats
+        }
+    }
 
     _u8g2.setDrawColor(1);
 }
 
 // ─── Step cell ───────────────────────────────────────────────────────────────
+// Visual language:
+//   Inactive   : four corner dots only — ghost placeholder
+//   Active     : rounded outline + velocity bar filling from the bottom
+//   Cursor/Play: inverted (white fill) + velocity bar as dark cutout
+//   Accent     : 2×2 dot in top-right corner
+//   Slide      : 3-pixel line at bottom-left
 
 void UI::drawStepCell(uint8_t step, uint8_t x, uint8_t y, bool cursor, bool playing) {
-    const Step& s = _seq->getStep(step);
-    uint8_t w = STEP_CELL_W - 1;
-    uint8_t h = STEP_CELL_H;
+    const Step& s    = _seq->getStep(step);
+    uint8_t     w    = STEP_CELL_W - 1;   // 15 px drawn
+    uint8_t     h    = STEP_CELL_H;        // 12 px
 
-    // Steps beyond the pattern length: just a centre dot, no cell
+    // Beyond pattern length — ghost pixel only (no cell border)
     if (step >= _seq->getCurrentPattern().length) {
         _u8g2.setDrawColor(1);
         _u8g2.drawPixel(x + w / 2, y + h / 2);
-        if (cursor) _u8g2.drawFrame(x, y, w, h);
+        if (cursor) _u8g2.drawRFrame(x, y, w, h, 1);
         return;
     }
 
-    if (cursor || playing) {
-        // Filled cell
+    bool highlight = cursor || playing;
+
+    if (highlight) {
+        // Inverted cell — white fill, content drawn in black
         _u8g2.setDrawColor(1);
         _u8g2.drawRBox(x, y, w, h, 1);
         _u8g2.setDrawColor(0);
-    } else {
-        // Outline cell
+
+        if (s.active) {
+            // Velocity bar: black fill from bottom
+            uint8_t barH = (uint8_t)((s.velocity * (uint16_t)(h - 4)) / 127);
+            if (barH > 0)
+                _u8g2.drawBox(x + 1, (uint8_t)(y + h - 1 - barH), (uint8_t)(w - 2), barH);
+            if (s.accent) _u8g2.drawBox(x + w - 3, y + 1, 2, 2);
+            if (s.slide)  _u8g2.drawHLine(x + 1, y + h - 2, 4);
+        }
+
+    } else if (s.active) {
+        // Active, not selected: outline + white velocity fill
         _u8g2.setDrawColor(1);
         _u8g2.drawRFrame(x, y, w, h, 1);
-    }
 
-    // Step number (tiny)
-    _u8g2.setFont(u8g2_font_4x6_tr);
-    char num[3];
-    if (step < 9) snprintf(num, 3, "%d", step + 1);
-    else          snprintf(num, 3, "%X", step + 1);
-    _u8g2.drawStr(x + 1, y + 5, num);
+        uint8_t barH = (uint8_t)((s.velocity * (uint16_t)(h - 4)) / 127);
+        if (barH > 0)
+            _u8g2.drawBox(x + 1, (uint8_t)(y + h - 1 - barH), (uint8_t)(w - 2), barH);
+        if (s.accent) _u8g2.drawBox(x + w - 3, y + 1, 2, 2);
+        if (s.slide)  _u8g2.drawHLine(x + 1, y + h - 2, 4);
 
-    // Active indicator: filled dot in lower half
-    if (s.active) {
-        if (cursor || playing) {
-            _u8g2.setDrawColor(0);
-        } else {
-            _u8g2.setDrawColor(1);
-        }
-        // Note pitch → position indicator (3px wide bar at bottom)
-        int notePos = (s.note % 12) * (w - 4) / 12;
-        _u8g2.drawBox(x + 2 + notePos, y + h - 3, 3, 2);
-    }
-
-    // Accent mark (top-right corner dot)
-    if (s.accent) {
-        _u8g2.setDrawColor(cursor || playing ? 0 : 1);
+    } else {
+        // Inactive: four corner dots — minimal presence
+        _u8g2.setDrawColor(1);
+        _u8g2.drawPixel(x + 1,     y + 1);
         _u8g2.drawPixel(x + w - 2, y + 1);
-        _u8g2.drawPixel(x + w - 3, y + 1);
-    }
-    // Slide mark (small arrow)
-    if (s.slide) {
-        _u8g2.setDrawColor(cursor || playing ? 0 : 1);
-        _u8g2.drawPixel(x + 1, y + h - 2);
-        _u8g2.drawPixel(x + 2, y + h - 3);
+        _u8g2.drawPixel(x + 1,     y + h - 2);
+        _u8g2.drawPixel(x + w - 2, y + h - 2);
+        if (cursor) _u8g2.drawRFrame(x, y, w, h, 1);
     }
 
     _u8g2.setDrawColor(1);
@@ -1055,62 +1081,76 @@ void UI::drawStepCell(uint8_t step, uint8_t x, uint8_t y, bool cursor, bool play
 
 void UI::drawMainScreen() {
     uint8_t curStep = _seq->currentStep();
-    Pattern& pat = _seq->getCurrentPattern();
+    bool    playing = (_seq->getPlayState() == PlayState::PLAYING);
 
-    // Row 1: steps 0-7
+    // ── Step grid ────────────────────────────────────────────────────────────
     for (uint8_t s = 0; s < 8; s++) {
-        uint8_t x = s * STEP_CELL_W;
-        bool isCursor  = (s == _selStep);
-        bool isPlaying = (s == curStep) && (_seq->getPlayState() == PlayState::PLAYING);
-        drawStepCell(s, x, STEP_ROW1_Y, isCursor, isPlaying);
+        drawStepCell(s, (uint8_t)(s * STEP_CELL_W), STEP_ROW1_Y,
+                     s == _selStep, playing && s == curStep);
     }
-    // Row 2: steps 8-15
     for (uint8_t s = 8; s < 16; s++) {
-        uint8_t x = (s - 8) * STEP_CELL_W;
-        bool isCursor  = (s == _selStep);
-        bool isPlaying = (s == curStep) && (_seq->getPlayState() == PlayState::PLAYING);
-        drawStepCell(s, x, STEP_ROW2_Y, isCursor, isPlaying);
+        drawStepCell(s, (uint8_t)((s - 8) * STEP_CELL_W), STEP_ROW2_Y,
+                     s == _selStep, playing && s == curStep);
     }
 
-    // Playback progress bar (under row 2)
-    if (_seq->getPlayState() == PlayState::PLAYING) {
+    // ── Progress bar (2 px, directly below row 2) ─────────────────────────
+    const uint8_t barY = STEP_ROW2_Y + STEP_CELL_H + 1;  // y=37
+    if (playing) {
         uint16_t prog = _seq->stepProgress();
-        _u8g2.drawFrame(0, 39, DISP_W, 2);
-        _u8g2.drawBox(0, 39, prog * DISP_W / 1000, 2);
+        _u8g2.drawHLine(0, barY, DISP_W);
+        _u8g2.drawBox(0, barY, (uint8_t)(prog * DISP_W / 1000), 2);
     }
 
-    // Separator
-    _u8g2.drawHLine(0, 42, DISP_W);
+    // ── Separator ─────────────────────────────────────────────────────────
+    _u8g2.drawHLine(0, (uint8_t)(barY + 3), DISP_W);   // y=40
 
-    // Info line — selected step info
-    _u8g2.setFont(u8g2_font_5x7_tr);
-    const Step& sel = _seq->getStep(_selStep);
+    // ── Info area ─────────────────────────────────────────────────────────
+    const Step& sel  = _seq->getStep(_selStep);
+    const uint8_t iy = barY + 5;   // info area top = y=42
 
+    // Line 1: Note  V:vel  G:gate%
     char noteBuf[6];
-    if (sel.active) {
-        noteName(sel.note, noteBuf);
-    } else {
-        strcpy(noteBuf, "---");
-    }
+    if (sel.active) noteName(sel.note, noteBuf);
+    else            strcpy(noteBuf, "---");
 
-    char info[32];
-    snprintf(info, sizeof(info), "%s V:%d G:%d%%",
+    char line1[28];
+    snprintf(line1, sizeof(line1), "%s  V:%d  G:%d%%",
              noteBuf, sel.velocity, sel.gate);
-    _u8g2.drawStr(0, 51, info);
+    _u8g2.setFont(u8g2_font_5x7_tr);
+    _u8g2.drawStr(0, (uint8_t)(iy + 8), line1);          // baseline y=50
 
-    // Probability + flags
-    char info2[32];
-    snprintf(info2, sizeof(info2), "P:%d%% %s%s%s",
-             sel.probability,
-             sel.accent ? "ACC " : "",
-             sel.slide  ? "SLD " : "",
-             sel.active ? "" : "OFF");
-    _u8g2.drawStr(0, 60, info2);
+    // Line 2: P:prob%  then badge pills for ACC / SLD
+    char probBuf[10];
+    snprintf(probBuf, sizeof(probBuf), "P:%d%%", sel.probability);
+    _u8g2.drawStr(0, (uint8_t)(iy + 19), probBuf);       // baseline y=61
 
-    // Encoder hint (top-right of info area)
+    // Badge helper: filled pill when active, lowercase plain text when not.
+    // Badge box top = iy+11 (y=53), height=9, text baseline = iy+19 (y=61)
+    auto badge = [&](uint8_t bx, const char* labelOn, const char* labelOff, bool on) {
+        if (on) {
+            _u8g2.drawBox(bx, (uint8_t)(iy + 11), 19, 9);
+            _u8g2.setDrawColor(0);
+            _u8g2.drawStr((uint8_t)(bx + 2), (uint8_t)(iy + 19), labelOn);
+            _u8g2.setDrawColor(1);
+        } else {
+            _u8g2.drawStr((uint8_t)(bx + 2), (uint8_t)(iy + 19), labelOff);
+        }
+    };
+
+    badge(42, "ACC", "acc", sel.accent);
+    badge(65, "SLD", "sld", sel.slide);
+
+    // Right-edge indicator: BPM-edit badge when shift held, step number otherwise
     _u8g2.setFont(u8g2_font_4x6_tr);
     if (_editMode) {
-        _u8g2.drawStr(110, 51, "BPM");
+        _u8g2.drawBox(104, (uint8_t)(iy + 11), 24, 9);
+        _u8g2.setDrawColor(0);
+        _u8g2.drawStr(107, (uint8_t)(iy + 19), "BPM");
+        _u8g2.setDrawColor(1);
+    } else {
+        char stepBuf[6];
+        snprintf(stepBuf, sizeof(stepBuf), "S%02d", _selStep + 1);
+        _u8g2.drawStr(110, (uint8_t)(iy + 19), stepBuf);
     }
 }
 
@@ -1365,24 +1405,29 @@ void UI::drawScaleSel() {
 // ─── BPM edit ────────────────────────────────────────────────────────────────
 
 void UI::drawBPMEdit() {
+    // Inverted top label bar
+    _u8g2.drawBox(0, 0, DISP_W, 11);
+    _u8g2.setDrawColor(0);
+    _u8g2.setFont(u8g2_font_5x7_tr);
+    _u8g2.drawStr(50, 8, "BPM");
+    _u8g2.setDrawColor(1);
+
+    // Big BPM number
     _u8g2.setFont(u8g2_font_9x18B_tr);
     char bpmBuf[8];
-    snprintf(bpmBuf, sizeof(bpmBuf), "%3d", _bpmTmp);
-
+    snprintf(bpmBuf, sizeof(bpmBuf), "%d", _bpmTmp);
     int tw = _u8g2.getStrWidth(bpmBuf);
-    _u8g2.drawStr((DISP_W - tw) / 2, 38, bpmBuf);
+    _u8g2.drawStr((DISP_W - tw) / 2, 40, bpmBuf);
 
-    _u8g2.setFont(u8g2_font_5x7_tr);
-    _u8g2.drawStr(45, 10, "BPM");
+    // Animated metronome dot — sweeps across a thin bar
+    _u8g2.drawHLine(0, 46, DISP_W);
+    unsigned long now     = millis();
+    unsigned long beatMs  = 60000UL / (unsigned long)_bpmTmp;
+    uint8_t dotX = (uint8_t)((now % beatMs) * DISP_W / beatMs);
+    _u8g2.drawBox(dotX, 47, 4, 4);
 
     _u8g2.setFont(u8g2_font_4x6_tr);
-    _u8g2.drawStr(0, 55, "[ENC]=change  [PUSH]=back");
-
-    // Tempo indicator — animated dots
-    unsigned long now = millis();
-    unsigned long stepMs = 15000 / _bpmTmp;
-    int dotPos = (now % stepMs) * DISP_W / stepMs;
-    _u8g2.drawBox(dotPos, 44, 4, 4);
+    _u8g2.drawStr(14, 60, "ENC:change   PUSH:back");
 }
 
 // ─── MIDI settings ────────────────────────────────────────────────────────────
@@ -1408,24 +1453,32 @@ void UI::drawMainMenu() {
         "CHAIN", "SYNTH MODE", "SYNTH PARAMS", "MIDI", "SETTINGS"
     };
 
-    _u8g2.drawBox(8, 10, DISP_W - 16, DISP_H - 14);
+    // Solid black overlay panel with white inner border
+    _u8g2.drawBox(6, HEADER_H + 1, DISP_W - 12, DISP_H - HEADER_H - 4);
     _u8g2.setDrawColor(0);
-    _u8g2.drawFrame(9, 11, DISP_W - 18, DISP_H - 16);
+    _u8g2.drawFrame(7, HEADER_H + 2, DISP_W - 14, DISP_H - HEADER_H - 6);
 
     int startItem = max(0, (int)_menuSel - 2);
-    int y = 22;
+    int y = HEADER_H + 12;
     for (int i = startItem; i < (int)MenuItem::NUM_ITEMS && i < startItem + 5; i++) {
         bool sel = (i == (int)_menuSel);
         if (sel) {
+            // Selected row: white bar + black text
             _u8g2.setDrawColor(1);
-            _u8g2.drawBox(10, y - 7, DISP_W - 20, 9);
+            _u8g2.drawBox(8, y - 7, DISP_W - 16, 9);
             _u8g2.setDrawColor(0);
         }
         _u8g2.setFont(u8g2_font_5x7_tr);
-        _u8g2.drawStr(14, y, MENU_LABELS[i]);
+        _u8g2.drawStr(12, y, MENU_LABELS[i]);
         _u8g2.setDrawColor(1);
         y += 9;
     }
+
+    // Scroll hint arrows
+    _u8g2.setFont(u8g2_font_4x6_tr);
+    _u8g2.setDrawColor(0);
+    if (startItem > 0)                                 _u8g2.drawStr(DISP_W - 14, HEADER_H + 8,  "^");
+    if (startItem + 5 < (int)MenuItem::NUM_ITEMS)      _u8g2.drawStr(DISP_W - 14, DISP_H - 5,   "v");
     _u8g2.setDrawColor(1);
 }
 

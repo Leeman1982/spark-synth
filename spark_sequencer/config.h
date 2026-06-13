@@ -58,9 +58,9 @@
 #define DISP_H            64
 #define HEADER_H          10
 #define STEP_CELL_W       16    // 128 / 8 steps per row
-#define STEP_CELL_H       13
+#define STEP_CELL_H       12
 #define STEP_ROW1_Y       11
-#define STEP_ROW2_Y       25
+#define STEP_ROW2_Y       24    // ROW1_Y + STEP_CELL_H + 1
 
 // ─── Timing ───────────────────────────────────────────────────────────────────
 #define UI_REFRESH_MS     33    // ~30 fps
