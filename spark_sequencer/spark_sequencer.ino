@@ -203,9 +203,9 @@ void loop() {
     if (controls.encoder.wasPressed()) {
         ui.handleEncPress();
     }
-    if (controls.encoder.wasLongPress()) {
-        ui.handleBack();
-    }
+    // Encoder long-press: consume it silently so it doesn't trigger back
+    // navigation. The BACK button is the dedicated back control.
+    controls.encoder.wasLongPress();
 
     // ── BACK button ───────────────────────────────────────────────────────
     if (controls.btnBack.wasPressed()) {
