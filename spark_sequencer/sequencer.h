@@ -80,6 +80,8 @@ public:
     void     setChain(const ChainEntry* chain, uint8_t len);
     void     clearChain();
     bool     isChaining() const { return _chainLen > 0; }
+    const ChainEntry* getChain() const { return _chain; }
+    uint8_t  chainLen()    const { return _chainLen; }
 
     // MIDI channel for current pattern
     uint8_t midiChannel() const { return _patterns[_patIdx].midiChannel; }

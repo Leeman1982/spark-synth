@@ -102,8 +102,8 @@ void UI::handleEncoder(int delta) {
     switch(_screen) {
         case Screen::MAIN:
             if (_editMode) {
-                // Edit BPM directly from main screen with shift held
                 _seq->nudgeBPM(delta);
+                _bpmTmp = _seq->getBPM();  // keep BPM_EDIT screen in sync
             } else {
                 _selStep = (uint8_t)((_selStep + delta + NUM_STEPS) % NUM_STEPS);
             }
@@ -165,8 +165,27 @@ void UI::handleEncoder(int delta) {
         }
 
         case Screen::MIDI_SETTINGS:
-            _midiChTmp = (uint8_t)constrain((int)_midiChTmp + delta, 1, 16);
+            if (_midiEditing) {
+                _midiChTmp = (uint8_t)constrain((int)_midiChTmp + delta, 1, 16);
+            } else {
+                _midiSel = (uint8_t)constrain((int)_midiSel + delta, 0, 1);
+            }
             break;
+
+        case Screen::SETTINGS:
+            if (_settingsEditing) {
+                float v = _engine->getParams().masterVol + delta * 0.05f;
+                _engine->getParams().masterVol = constrain(v, 0.0f, 1.0f);
+                _engine->refresh();
+            }
+            break;
+
+        case Screen::CHAIN_EDIT: {
+            int8_t pi = _chainBuf[_chainEditPos].patternIdx;
+            pi = (int8_t)constrain((int)pi + delta, -1, (int)NUM_PATTERNS - 1);
+            _chainBuf[_chainEditPos].patternIdx = pi;
+            break;
+        }
 
         case Screen::PATTERN_OPTS: {
             Pattern& p = _seq->getCurrentPattern();
@@ -249,15 +268,26 @@ void UI::handleEncPress() {
                     _synthEditing = false;
                     pushScreen(Screen::SYNTH_PARAMS);
                     break;
-                case MenuItem::PAT_CHAIN:
+                case MenuItem::PAT_CHAIN: {
+                    const ChainEntry* ch = _seq->getChain();
+                    uint8_t cl = _seq->chainLen();
+                    for (uint8_t i = 0; i < CHAIN_LEN; i++) {
+                        if (i < cl) { _chainBuf[i] = ch[i]; }
+                        else        { _chainBuf[i].patternIdx = -1; _chainBuf[i].repeats = 1; }
+                    }
+                    _chainEditPos = 0;
                     pushScreen(Screen::CHAIN_EDIT);
                     break;
+                }
                 case MenuItem::MIDI_SETTINGS:
-                    _midiChTmp  = _seq->midiChannel();
-                    _midiClkTmp = _seq->midiClockOut();
+                    _midiChTmp   = _seq->midiChannel();
+                    _midiClkTmp  = _seq->midiClockOut();
+                    _midiSel     = 0;
+                    _midiEditing = false;
                     pushScreen(Screen::MIDI_SETTINGS);
                     break;
                 case MenuItem::SETTINGS:
+                    _settingsEditing = false;
                     pushScreen(Screen::SETTINGS);
                     break;
                 default: break;
@@ -269,7 +299,19 @@ void UI::handleEncPress() {
             break;
 
         case Screen::MIDI_SETTINGS:
-            _midiClkTmp = !_midiClkTmp;
+            if (_midiSel == 0) {
+                _midiEditing = !_midiEditing;
+            } else {
+                _midiClkTmp = !_midiClkTmp;
+            }
+            break;
+
+        case Screen::SETTINGS:
+            _settingsEditing = !_settingsEditing;
+            break;
+
+        case Screen::CHAIN_EDIT:
+            _chainEditPos = (_chainEditPos + 1) % CHAIN_LEN;
             break;
 
         case Screen::SYNTH_MODE:
@@ -361,15 +403,20 @@ void UI::handleBack() {
         case Screen::SCALE_SEL:
             if (_editMode) { _editMode = false; }
             else {
-                // Apply scale selection
                 _seq->getCurrentPattern().rootNote = _rootTmp;
                 _seq->getCurrentPattern().scaleIdx = _scaleTmp;
                 popScreen();
             }
             break;
+        case Screen::SETTINGS:
+            if (_settingsEditing) { _settingsEditing = false; }
+            else                  { popScreen(); }
+            break;
+        case Screen::MIDI_SETTINGS:
+            if (_midiEditing) { _midiEditing = false; }
+            else              { popScreen(); }
+            break;
         case Screen::MAIN_MENU:
-            // Always exit to MAIN — _prevScreen may point back at the menu
-            // after a sub-screen pop, which would trap the user here.
             _screen = Screen::MAIN;
             break;
         default:
@@ -393,15 +440,31 @@ void UI::handleConfirm() {
             if (!_synthEditing) _synthEditing = true;
             break;
         case Screen::SCALE_SEL:
-            // Confirm and quantize
+            _editMode = false;
             _seq->getCurrentPattern().rootNote = _rootTmp;
             _seq->getCurrentPattern().scaleIdx = _scaleTmp;
             _seq->quantizePattern(_seq->currentPattern());
             popScreen();
             break;
         case Screen::MIDI_SETTINGS:
+            _midiEditing = false;
             _seq->getCurrentPattern().midiChannel = _midiChTmp;
             _seq->setMidiClock(_midiClkTmp);
+            popScreen();
+            break;
+        case Screen::CHAIN_EDIT: {
+            uint8_t len = 0;
+            for (uint8_t i = 0; i < CHAIN_LEN; i++) {
+                if (_chainBuf[i].patternIdx < 0) break;
+                len = i + 1;
+            }
+            if (len > 0) _seq->setChain(_chainBuf, len);
+            else         _seq->clearChain();
+            popScreen();
+            break;
+        }
+        case Screen::SETTINGS:
+            _settingsEditing = false;
             popScreen();
             break;
         default:
@@ -442,11 +505,9 @@ void UI::handleLongConfirm() {
 
 void UI::changeStepField(int delta) {
     Step& s = _seq->getStep(_selStep);
-    Pattern& pat = _seq->getCurrentPattern();
     switch(_stepField) {
         case StepField::NOTE:
             s.note = (uint8_t)constrain((int)s.note + delta, 0, 127);
-            s.active = true;
             break;
         case StepField::VELOCITY:
             s.velocity = (uint8_t)constrain((int)s.velocity + delta * 5, 1, 127);
@@ -1024,11 +1085,11 @@ void UI::drawHeader() {
 //   Slide      : 3-pixel line at bottom-left
 
 void UI::drawStepCell(uint8_t step, uint8_t x, uint8_t y, bool cursor, bool playing) {
-    const Step& s    = _seq->getStep(step);
-    uint8_t     w    = STEP_CELL_W - 1;   // 15 px drawn
-    uint8_t     h    = STEP_CELL_H;        // 12 px
+    const Step& s = _seq->getStep(step);
+    uint8_t     w = STEP_CELL_W - 1;   // 15 px drawn
+    uint8_t     h = STEP_CELL_H;        // 12 px
 
-    // Beyond pattern length — ghost pixel only (no cell border)
+    // Beyond pattern length — dim dot, cursor outline if selected
     if (step >= _seq->getCurrentPattern().length) {
         _u8g2.setDrawColor(1);
         _u8g2.drawPixel(x + w / 2, y + h / 2);
@@ -1036,42 +1097,45 @@ void UI::drawStepCell(uint8_t step, uint8_t x, uint8_t y, bool cursor, bool play
         return;
     }
 
-    bool highlight = cursor || playing;
+    _u8g2.setDrawColor(1);
 
-    if (highlight) {
-        // Inverted cell — white fill, content drawn in black
-        _u8g2.setDrawColor(1);
+    if (playing) {
+        // Playhead — full invert (bright white box)
         _u8g2.drawRBox(x, y, w, h, 1);
         _u8g2.setDrawColor(0);
-
         if (s.active) {
-            // Velocity bar: black fill from bottom
             uint8_t barH = (uint8_t)((s.velocity * (uint16_t)(h - 4)) / 127);
-            if (barH > 0)
-                _u8g2.drawBox(x + 1, (uint8_t)(y + h - 1 - barH), (uint8_t)(w - 2), barH);
+            if (barH > 0) _u8g2.drawBox(x + 1, (uint8_t)(y + h - 1 - barH), (uint8_t)(w - 2), barH);
             if (s.accent) _u8g2.drawBox(x + w - 3, y + 1, 2, 2);
             if (s.slide)  _u8g2.drawHLine(x + 1, y + h - 2, 4);
         }
-
-    } else if (s.active) {
-        // Active, not selected: outline + white velocity fill
-        _u8g2.setDrawColor(1);
+        if (cursor) {
+            // Cursor is also on the playhead — small inner frame marks the cursor position
+            _u8g2.drawFrame(x + 2, y + 2, w - 4, h - 4);
+        }
+    } else if (cursor) {
+        // Cursor only — double outline so it reads differently from the filled playhead
         _u8g2.drawRFrame(x, y, w, h, 1);
-
+        _u8g2.drawRFrame(x + 1, y + 1, w - 2, h - 2, 1);
+        if (s.active) {
+            uint8_t barH = (uint8_t)((s.velocity * (uint16_t)(h - 4)) / 127);
+            if (barH > 0) _u8g2.drawBox(x + 2, (uint8_t)(y + h - 2 - barH), (uint8_t)(w - 4), barH);
+            if (s.accent) _u8g2.drawBox(x + w - 3, y + 1, 2, 2);
+            if (s.slide)  _u8g2.drawHLine(x + 1, y + h - 2, 4);
+        }
+    } else if (s.active) {
+        // Active, not highlighted — single outline + velocity bar
+        _u8g2.drawRFrame(x, y, w, h, 1);
         uint8_t barH = (uint8_t)((s.velocity * (uint16_t)(h - 4)) / 127);
-        if (barH > 0)
-            _u8g2.drawBox(x + 1, (uint8_t)(y + h - 1 - barH), (uint8_t)(w - 2), barH);
+        if (barH > 0) _u8g2.drawBox(x + 1, (uint8_t)(y + h - 1 - barH), (uint8_t)(w - 2), barH);
         if (s.accent) _u8g2.drawBox(x + w - 3, y + 1, 2, 2);
         if (s.slide)  _u8g2.drawHLine(x + 1, y + h - 2, 4);
-
     } else {
-        // Inactive: four corner dots — minimal presence
-        _u8g2.setDrawColor(1);
+        // Inactive — four corner dots, ghost presence
         _u8g2.drawPixel(x + 1,     y + 1);
         _u8g2.drawPixel(x + w - 2, y + 1);
         _u8g2.drawPixel(x + 1,     y + h - 2);
         _u8g2.drawPixel(x + w - 2, y + h - 2);
-        if (cursor) _u8g2.drawRFrame(x, y, w, h, 1);
     }
 
     _u8g2.setDrawColor(1);
@@ -1283,14 +1347,16 @@ void UI::drawSynthParams() {
         visRow++;
     }
 
-    // Scroll indicator
+    // Scroll indicator (right edge, 2px wide) — clamped so it never overflows
     int totalVis = 0;
     for (int i = 0; i < (int)SynthParamID::NUM_PARAMS; i++) {
         if (isSynthParamVisible((SynthParamID)i)) totalVis++;
     }
     if (totalVis > ROWS_VISIBLE) {
-        int barH = DISP_H * ROWS_VISIBLE / totalVis;
-        int barY = HEADER_H + (_synthScroll * (DISP_H - HEADER_H) / totalVis);
+        int visH    = DISP_H - HEADER_H;
+        int barH    = max(4, visH * ROWS_VISIBLE / totalVis);
+        int maxScrl = totalVis - ROWS_VISIBLE;
+        int barY    = HEADER_H + (_synthScroll * (visH - barH) / max(1, maxScrl));
         _u8g2.drawBox(DISP_W - 2, barY, 2, barH);
     }
 }
@@ -1363,10 +1429,35 @@ void UI::drawChainEdit() {
     _u8g2.setFont(u8g2_font_5x7_tr);
     _u8g2.drawStr(0, 20, "CHAIN EDIT");
     _u8g2.drawHLine(0, 22, DISP_W);
+
+    // 4x2 grid of chain slots, each cell 30x16px with 2px gap
+    for (uint8_t i = 0; i < CHAIN_LEN; i++) {
+        uint8_t col = i % 4;
+        uint8_t row = i / 4;
+        uint8_t sx  = col * 32;
+        uint8_t sy  = 25 + row * 18;
+        bool    sel = (i == _chainEditPos);
+
+        if (sel) {
+            _u8g2.drawBox(sx, sy, 30, 16);
+            _u8g2.setDrawColor(0);
+        } else {
+            _u8g2.drawFrame(sx, sy, 30, 16);
+        }
+
+        char label[5];
+        if (_chainBuf[i].patternIdx < 0) {
+            strcpy(label, "--");
+        } else {
+            snprintf(label, sizeof(label), "P%d", _chainBuf[i].patternIdx + 1);
+        }
+        _u8g2.setFont(u8g2_font_6x10_tr);
+        _u8g2.drawStr(sx + 6, sy + 12, label);
+        _u8g2.setDrawColor(1);
+    }
+
     _u8g2.setFont(u8g2_font_4x6_tr);
-    _u8g2.drawStr(0, 35, "Chain editing: use SYNTH");
-    _u8g2.drawStr(0, 44, "PARAMS screen to set up");
-    _u8g2.drawStr(0, 53, "pattern sequence.");
+    _u8g2.drawStr(0, 60, "ENC:pat  PUSH:next  CFM:apply");
 }
 
 // ─── Scale select ─────────────────────────────────────────────────────────────
@@ -1378,10 +1469,12 @@ void UI::drawScaleSel() {
     _u8g2.drawStr(0, 20, title);
     _u8g2.drawHLine(0, 22, DISP_W);
 
-    // Show 4 scale rows (y=25..55) — 5th row would clip below y=63
+    // Show 4 scale rows (y=25..52) — window starts one above selected, clamped at edges
+    int startIdx = max(0, (int)_scaleTmp - 1);
+    if (startIdx + 4 > (int)NUM_SCALES) startIdx = max(0, (int)NUM_SCALES - 4);
     for (int i = 0; i < 4; i++) {
-        int visIdx = (int)_scaleTmp - 1 + i;
-        if (visIdx < 0 || visIdx >= (int)NUM_SCALES) continue;
+        int visIdx = startIdx + i;
+        if (visIdx >= (int)NUM_SCALES) break;
         int y = 25 + i * 9;
         bool isSel = (visIdx == (int)_scaleTmp) && !_editMode;
         if (isSel) {
@@ -1441,11 +1534,34 @@ void UI::drawMIDISettings() {
     _u8g2.drawHLine(0, 22, DISP_W);
 
     char buf[24];
-    snprintf(buf, sizeof(buf), "CHANNEL: %d", _midiChTmp);
-    _u8g2.drawStr(0, 35, buf);
-    _u8g2.drawStr(0, 46, _midiClkTmp ? "CLOCK OUT: ON" : "CLOCK OUT: OFF");
+
+    // Channel row
+    if (_midiSel == 0) {
+        _u8g2.drawBox(0, 24, DISP_W, 11);
+        _u8g2.setDrawColor(0);
+    }
+    if (_midiEditing) {
+        snprintf(buf, sizeof(buf), "CH  < %d >", _midiChTmp);
+    } else {
+        snprintf(buf, sizeof(buf), "CH    %d", _midiChTmp);
+    }
+    _u8g2.drawStr(2, 33, buf);
+    _u8g2.setDrawColor(1);
+
+    // Clock row
+    if (_midiSel == 1) {
+        _u8g2.drawBox(0, 35, DISP_W, 11);
+        _u8g2.setDrawColor(0);
+    }
+    _u8g2.drawStr(2, 44, _midiClkTmp ? "CLK OUT   ON" : "CLK OUT   OFF");
+    _u8g2.setDrawColor(1);
+
     _u8g2.setFont(u8g2_font_4x6_tr);
-    _u8g2.drawStr(0, 60, "[ENC]=ch  [PUSH]=clk  [CFM]=ok");
+    if (_midiSel == 0) {
+        _u8g2.drawStr(0, 59, _midiEditing ? "ENC:ch  PUSH:done  CFM:apply" : "ENC:row  PUSH:edit  CFM:apply");
+    } else {
+        _u8g2.drawStr(0, 59, "ENC:row  PUSH:toggle  CFM:apply");
+    }
 }
 
 // ─── Main menu overlay ────────────────────────────────────────────────────────
@@ -1495,10 +1611,20 @@ void UI::drawSettings() {
     _u8g2.drawStr(0, 20, "SETTINGS");
     _u8g2.drawHLine(0, 22, DISP_W);
 
-    char buf[24];
-    snprintf(buf, sizeof(buf), "MASTER VOL: %.0f%%",
-             _engine->getParams().masterVol * 100);
-    _u8g2.drawStr(0, 34, buf);
-    _u8g2.drawStr(0, 44, "[BCK LONG]=SAVE");
-    _u8g2.drawStr(0, 54, "[CFM LONG]=LOAD");
+    // Master volume row — always selected (only row for now)
+    _u8g2.drawBox(0, 24, DISP_W, 11);
+    _u8g2.setDrawColor(0);
+    char buf[28];
+    int pct = (int)(_engine->getParams().masterVol * 100.0f + 0.5f);
+    if (_settingsEditing) {
+        snprintf(buf, sizeof(buf), "VOL  < %d%% >", pct);
+    } else {
+        snprintf(buf, sizeof(buf), "VOL    %d%%", pct);
+    }
+    _u8g2.drawStr(2, 33, buf);
+    _u8g2.setDrawColor(1);
+
+    _u8g2.setFont(u8g2_font_4x6_tr);
+    _u8g2.drawStr(0, 47, _settingsEditing ? "ENC:adjust  PUSH:done" : "PUSH:edit vol");
+    _u8g2.drawStr(0, 56, "LONG BCK:save  CFM:exit");
 }

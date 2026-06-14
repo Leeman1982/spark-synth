@@ -148,8 +148,17 @@ private:
     SynthMode _modeTmp    = SynthMode::DUAL_OSC;
 
     // MIDI settings
-    uint8_t   _midiChTmp  = 1;
-    bool      _midiClkTmp = false;
+    uint8_t   _midiChTmp   = 1;
+    bool      _midiClkTmp  = false;
+    uint8_t   _midiSel     = 0;   // 0=channel row, 1=clock row
+    bool      _midiEditing = false;
+
+    // Settings screen
+    bool      _settingsEditing = false;
+
+    // Chain edit
+    uint8_t   _chainEditPos = 0;
+    ChainEntry _chainBuf[CHAIN_LEN];
 
     // ── Drawing functions ─────────────────────────────────────────────────────
     void drawAll();
@@ -169,13 +178,9 @@ private:
 
     // Step cell helpers
     void drawStepCell(uint8_t step, uint8_t x, uint8_t y, bool cursor, bool playing);
-    void drawParamBar(const char* label, float val, float mn, float mx, uint8_t y, bool selected, bool editing);
-    void drawParamBarInt(const char* label, int val, int mn, int mx, uint8_t y, bool selected, bool editing);
-    void drawParamStr(const char* label, const char* val, uint8_t y, bool selected, bool editing);
 
     // Param access helpers
     float   getSynthParamF(SynthParamID id);
-    int     getSynthParamI(SynthParamID id);
     void    setSynthParamF(SynthParamID id, float v);
     void    setSynthParamI(SynthParamID id, int v);
     const char* synthParamLabel(SynthParamID id);
@@ -184,7 +189,6 @@ private:
     float   synthParamMin(SynthParamID id);
     float   synthParamMax(SynthParamID id);
     float   synthParamStep(SynthParamID id);
-    bool    synthParamIsFloat(SynthParamID id);
 
     // Navigation helpers
     void pushScreen(Screen s);
