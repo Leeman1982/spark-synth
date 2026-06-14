@@ -58,7 +58,7 @@
 
 // ─── Timing ───────────────────────────────────────────────────────────────────
 #define UI_REFRESH_MS     33    // ~30 fps
-#define DEBOUNCE_MS       8
+#define DEBOUNCE_MS       20   // 20 ms covers worst-case tact-switch bounce
 #define LONG_PRESS_MS     600
 // EC11 encoders emit 4 quadrature transitions per detent click.
 // Set to 2 or 1 if your encoder feels like it needs two clicks per step.

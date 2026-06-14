@@ -223,8 +223,8 @@ void loop() {
         ui.handleLongConfirm();
     }
 
-    // ── SHIFT button (modifier) ───────────────────────────────────────────
-    if (controls.btnShift.wasPressed()) {
+    // ── SHIFT button — fires on ANY release (toggle, no long-press action)
+    if (controls.btnShift.wasReleased()) {
         ui.handleShift();
     }
 

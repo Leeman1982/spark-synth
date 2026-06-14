@@ -105,27 +105,29 @@ void Button::update() {
     bool active = _activeLow ? (raw == LOW) : (raw == HIGH);
     unsigned long now = millis();
 
+    // Reset debounce timer on any raw change
     if (active != _lastState) {
         _lastDebounce = now;
     }
+    _lastState = active;
 
     if ((now - _lastDebounce) > DEBOUNCE_MS) {
         if (active && !_state) {
-            // Rising edge
-            _state       = true;
-            _pressedFlag = true;
-            _pressTime   = now;
-            _longFired   = false;
-            _lpReported  = false;
+            // Stable press edge
+            _state      = true;
+            _pressTime  = now;
+            _longFired  = false;
+            _lpReported = false;
         } else if (!active && _state) {
-            // Falling edge
-            _state          = false;
-            _releasedFlag   = true;
+            // Stable release edge
+            _state        = false;
+            _releasedFlag = true;
+            // Short press only if long-press did not already fire
+            if (!_longFired) _pressedFlag = true;
         }
     }
-    _lastState = active;
 
-    // Long press detection
+    // Long press fires once while still held
     if (_state && !_longFired && (now - _pressTime) >= LONG_PRESS_MS) {
         _longFired = true;
     }

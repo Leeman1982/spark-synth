@@ -1269,9 +1269,10 @@ void UI::drawSynthParams() {
         const char* valStr = synthParamValue(id, valBuf);
         int vw = _u8g2.getStrWidth(valStr);
         if (edit) {
-            _u8g2.drawStr(DISP_W - vw - 8, y + 7, "<");
-            _u8g2.drawStr(DISP_W - vw - 4, y + 7, valStr);
-            _u8g2.drawStr(DISP_W - 4, y + 7, ">");
+            // "<" · value · ">"  with 2 px gaps on each side of the value
+            _u8g2.drawStr(DISP_W - vw - 12, y + 7, "<");
+            _u8g2.drawStr(DISP_W - vw -  8, y + 7, valStr);
+            _u8g2.drawStr(DISP_W -       4, y + 7, ">");
         } else {
             _u8g2.drawStr(DISP_W - vw - 1, y + 7, valStr);
         }
@@ -1377,29 +1378,31 @@ void UI::drawScaleSel() {
     _u8g2.drawStr(0, 20, title);
     _u8g2.drawHLine(0, 22, DISP_W);
 
-    for (int i = 0; i < (int)NUM_SCALES && i < 5; i++) {
-        int visIdx = (int)_scaleTmp - 2 + i;
+    // Show 4 scale rows (y=25..55) — 5th row would clip below y=63
+    for (int i = 0; i < 4; i++) {
+        int visIdx = (int)_scaleTmp - 1 + i;
         if (visIdx < 0 || visIdx >= (int)NUM_SCALES) continue;
-        int y = 32 + i * 9;
-        if (visIdx == _scaleTmp) {
-            if (!_editMode) {
-                _u8g2.drawBox(0, y - 7, DISP_W, 9);
-                _u8g2.setDrawColor(0);
-            }
+        int y = 25 + i * 9;
+        bool isSel = (visIdx == (int)_scaleTmp) && !_editMode;
+        if (isSel) {
+            _u8g2.drawBox(0, y - 7, DISP_W, 9);
+            _u8g2.setDrawColor(0);
         }
+        _u8g2.setFont(u8g2_font_5x7_tr);
         _u8g2.drawStr(4, y, SCALES[visIdx].name);
         _u8g2.setDrawColor(1);
     }
 
-    // Root note selector
+    // Root note row at the bottom
+    _u8g2.drawHLine(0, 57, DISP_W);
     if (_editMode) {
-        _u8g2.drawBox(0, 55, DISP_W, 9);
+        _u8g2.drawBox(0, 58, DISP_W, 6);
         _u8g2.setDrawColor(0);
-        _u8g2.drawStr(4, 62, NOTE_NAMES[_rootTmp]);
-        _u8g2.setDrawColor(1);
     }
     _u8g2.setFont(u8g2_font_4x6_tr);
-    _u8g2.drawStr(80, 62, _editMode ? "[ROOT]" : "[SCALE]");
+    _u8g2.drawStr(2, 63, NOTE_NAMES[_rootTmp]);
+    _u8g2.drawStr(60, 63, _editMode ? "< ROOT >" : "PUSH=edit root");
+    _u8g2.setDrawColor(1);
 }
 
 // ─── BPM edit ────────────────────────────────────────────────────────────────
@@ -1453,32 +1456,35 @@ void UI::drawMainMenu() {
         "CHAIN", "SYNTH MODE", "SYNTH PARAMS", "MIDI", "SETTINGS"
     };
 
-    // Solid black overlay panel with white inner border
+    // White popup panel + dark border
+    _u8g2.setDrawColor(1);
     _u8g2.drawBox(6, HEADER_H + 1, DISP_W - 12, DISP_H - HEADER_H - 4);
     _u8g2.setDrawColor(0);
     _u8g2.drawFrame(7, HEADER_H + 2, DISP_W - 14, DISP_H - HEADER_H - 6);
+    // All content inside the panel uses color=0 (dark on white)
 
     int startItem = max(0, (int)_menuSel - 2);
     int y = HEADER_H + 12;
     for (int i = startItem; i < (int)MenuItem::NUM_ITEMS && i < startItem + 5; i++) {
         bool sel = (i == (int)_menuSel);
         if (sel) {
-            // Selected row: white bar + black text
-            _u8g2.setDrawColor(1);
-            _u8g2.drawBox(8, y - 7, DISP_W - 16, 9);
-            _u8g2.setDrawColor(0);
+            // Dark highlight bar + white text (invert within the white panel)
+            _u8g2.drawBox(8, y - 7, DISP_W - 16, 9);  // color=0: dark bar
+            _u8g2.setDrawColor(1);                       // white text
+            _u8g2.setFont(u8g2_font_5x7_tr);
+            _u8g2.drawStr(12, y, MENU_LABELS[i]);
+            _u8g2.setDrawColor(0);                       // restore dark for next item
+        } else {
+            _u8g2.setFont(u8g2_font_5x7_tr);
+            _u8g2.drawStr(12, y, MENU_LABELS[i]);       // color=0: dark text on white
         }
-        _u8g2.setFont(u8g2_font_5x7_tr);
-        _u8g2.drawStr(12, y, MENU_LABELS[i]);
-        _u8g2.setDrawColor(1);
         y += 9;
     }
 
-    // Scroll hint arrows
+    // Scroll hint arrows (dark on white)
     _u8g2.setFont(u8g2_font_4x6_tr);
-    _u8g2.setDrawColor(0);
-    if (startItem > 0)                                 _u8g2.drawStr(DISP_W - 14, HEADER_H + 8,  "^");
-    if (startItem + 5 < (int)MenuItem::NUM_ITEMS)      _u8g2.drawStr(DISP_W - 14, DISP_H - 5,   "v");
+    if (startItem > 0)                            _u8g2.drawStr(DISP_W - 14, HEADER_H + 8, "^");
+    if (startItem + 5 < (int)MenuItem::NUM_ITEMS) _u8g2.drawStr(DISP_W - 14, DISP_H - 5,  "v");
     _u8g2.setDrawColor(1);
 }
 
