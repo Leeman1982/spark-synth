@@ -132,9 +132,14 @@ void setup() {
         sequencer.setPattern(gs.lastPattern);
     }
 
-    // Demo pattern only on first boot — never clobber a saved pattern
+    // Demo pattern on first boot, or if pattern 0 has no active steps
     if (!storage.patternExists(0)) {
         initDemoPattern();
+    } else {
+        bool anyActive = false;
+        Pattern& p0 = sequencer.getPattern(0);
+        for (int s = 0; s < NUM_STEPS && !anyActive; s++) anyActive = p0.steps[s].active;
+        if (!anyActive) initDemoPattern();
     }
 
     // Apply current pattern's synth params
