@@ -241,13 +241,21 @@ void Sequencer::update() {
         }
     }
 
-    // Step advance with swing: odd 16ths delayed, even pulled early
-    unsigned long interval = _stepIntervalUs;
-    if (pat.swing > 0) {
-        unsigned long swingUs = _stepIntervalUs * pat.swing / 200;
-        interval += (_step & 1) ? swingUs : -swingUs;
-    }
-    if ((long)(now - _lastStepUs) >= (long)interval) {
+    // Step advance — process every interval that has elapsed this call.
+    // Guards against loop() being delayed by display rendering: without
+    // this loop, each loop() call only fires one step even if several
+    // intervals have passed, making the sequencer run at loop()-rate
+    // instead of BPM rate.
+    int guard = getCurrentPattern().length;  // never more than one full pattern
+    while (guard-- > 0) {
+        // Signed swing to avoid unsigned-wrap on even (early) steps
+        long swingUs = (pat.swing > 0)
+            ? (long)(_stepIntervalUs * pat.swing / 200UL)
+            : 0L;
+        unsigned long interval = (unsigned long)
+            ((long)_stepIntervalUs + ((_step & 1) ? swingUs : -swingUs));
+
+        if ((long)(now - _lastStepUs) < (long)interval) break;
         _lastStepUs += interval;
         triggerStep(_step);
         advanceStep();
