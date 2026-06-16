@@ -87,14 +87,19 @@ void setup() {
     amyCfg.features.echo        = 1;
     amyCfg.features.chorus      = 0;
     amyCfg.features.default_synths = 1;  // creates synth channel 1
-    amyCfg.max_oscs             = 128;
+    amyCfg.features.startup_bleep = 1;   // audible self-test tone on boot
+    amyCfg.max_oscs             = 200;
     amyCfg.max_voices           = 32;
-    amyCfg.max_synths           = 8;
+    amyCfg.max_synths           = 16;
     amyCfg.midi                 = AMY_MIDI_IS_NONE;
     amyCfg.platform.multicore   = 1;
     amyCfg.platform.multithread = 1;
     amy_start(amyCfg);
-    Serial.println("[AMY] started");
+    Serial.println("[AMY] started (listen for startup bleep!)");
+
+    amy_event resetEvent = amy_default_event();
+    resetEvent.reset_osc = RESET_AMY;
+    amy_add_event(&resetEvent);
 
     // Unmute PCM5102 after AMY is running
     delay(50);
@@ -143,6 +148,9 @@ void setup() {
     }
 
     // Apply current pattern's synth params
+    if (haveSettings) {
+        sequencer.getCurrentPattern().synth.masterVol = gs.masterVol;
+    }
     synthEngine.setParams(sequencer.getCurrentPattern().synth);
 
     // ── Controls ───────────────────────────────────────────────────────────

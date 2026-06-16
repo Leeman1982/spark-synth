@@ -3,9 +3,11 @@
 // ─── Hardware: ESP32-S3 N16R8 (16MB Flash, 8MB PSRAM) ────────────────────────
 
 // PCM5102 I2S DAC  (SD pin HIGH = normal, LOW = mute)
-#define PIN_I2S_BCK       4
-#define PIN_I2S_WS        5
-#define PIN_I2S_DATA      6
+// Pin roles match the proven-working `main` branch (src/Hardware.h):
+// GPIO4 = WS/LRC, GPIO5 = DATA/DIN, GPIO6 = BCK.
+#define PIN_I2S_WS        4
+#define PIN_I2S_DATA      5
+#define PIN_I2S_BCK       6
 #define PIN_PCM_SD        7   // drive HIGH to unmute
 
 // SH1106 1.3" OLED — I2C  (EstarDyn module, same bus as encoder buttons)

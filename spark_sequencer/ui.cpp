@@ -177,6 +177,7 @@ void UI::handleEncoder(int delta) {
                 float v = _engine->getParams().masterVol + delta * 0.05f;
                 _engine->getParams().masterVol = constrain(v, 0.0f, 1.0f);
                 _engine->refresh();
+                _seq->getCurrentPattern().synth = _engine->getParams();
             }
             break;
 
