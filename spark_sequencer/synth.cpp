@@ -5,7 +5,7 @@ extern "C" {
 }
 
 // AMY synth channel used for all voices
-#define AMY_SYNTH_CH  1
+#define AMY_SYNTH_CH  0
 
 // ─── Wave type mapping ────────────────────────────────────────────────────────
 // AMY wave_t integers: SINE=0, PULSE=1, SAW_DOWN=2, SAW_UP=3, TRIANGLE=4, NOISE=5
